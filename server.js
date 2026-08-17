@@ -1076,10 +1076,19 @@ app.get(
   "/mercadolivre/sync-orders",
   async (req, res) => {
     try {
+      // Lotes curtos evitam timeout/upstream error no Railway.
+      // O offset permite continuar a sincronização na chamada seguinte.
       const requested = Number(req.query.limit || 200);
+      const requestedOffset = Number(req.query.offset || 0);
+
       const totalDesejado = Math.min(
         Math.max(Number.isFinite(requested) ? requested : 200, 1),
-        2000
+        300
+      );
+
+      const offsetInicial = Math.max(
+        Number.isFinite(requestedOffset) ? requestedOffset : 0,
+        0
       );
 
       let account = await getMercadoLivreAccount();
@@ -1094,7 +1103,7 @@ app.get(
       account = await ensureValidMercadoLivreToken(account);
 
       const resultados = [];
-      let offset = 0;
+      let offset = offsetInicial;
       let encontrados = 0;
       let terminou = false;
 
@@ -1190,10 +1199,15 @@ app.get(
         sucesso: comErro === 0,
         mensagem: "Sincronização paginada concluída.",
         solicitados: totalDesejado,
+        offset_inicial: offsetInicial,
         encontrados,
         sincronizados: comSucesso,
         erros: comErro,
         proximo_offset: offset,
+        terminou,
+        proxima_url: terminou
+          ? null
+          : `/mercadolivre/sync-orders?limit=${totalDesejado}&offset=${offset}`,
         resultados
       });
     } catch (erro) {
