@@ -1,5 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(express.json());
@@ -10,8 +11,22 @@ const CLIENT_ID = process.env.MERCADOLIVRE_CLIENT_ID;
 const CLIENT_SECRET = process.env.MERCADOLIVRE_CLIENT_SECRET;
 const REDIRECT_URI = process.env.MERCADOLIVRE_REDIRECT_URI;
 
-// Armazena temporariamente state + PKCE.
-// Depois vamos substituir por banco de dados/Redis para produção.
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
+
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_SECRET_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  }
+);
+
+// Temporário.
+// Depois vamos mover isso para Redis/banco.
 const oauthSessions = new Map();
 
 function base64url(buffer) {
@@ -22,7 +37,6 @@ function base64url(buffer) {
     .replace(/=/g, "");
 }
 
-// Página inicial
 app.get("/", (req, res) => {
   res.json({
     status: "online",
@@ -31,7 +45,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// Health check
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
@@ -39,21 +52,23 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Webhook do Mercado Livre
 app.post("/webhooks/mercadolivre", (req, res) => {
-  console.log("Notificação Mercado Livre:");
-  console.log(req.body);
+  console.log("Notificação recebida do Mercado Livre");
 
-  // Responde imediatamente ao Mercado Livre
   res.sendStatus(200);
 });
 
-// Inicia autorização REAL do Mercado Livre
 app.get("/auth/mercadolivre", (req, res) => {
-  if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
+  if (
+    !CLIENT_ID ||
+    !CLIENT_SECRET ||
+    !REDIRECT_URI ||
+    !SUPABASE_URL ||
+    !SUPABASE_SECRET_KEY
+  ) {
     return res.status(500).json({
       sucesso: false,
-      mensagem: "Variáveis do Mercado Livre não configuradas."
+      mensagem: "Variáveis obrigatórias não configuradas."
     });
   }
 
@@ -79,7 +94,7 @@ app.get("/auth/mercadolivre", (req, res) => {
     response_type: "code",
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
-    state: state,
+    state,
     code_challenge: codeChallenge,
     code_challenge_method: "S256"
   });
@@ -90,7 +105,6 @@ app.get("/auth/mercadolivre", (req, res) => {
   res.redirect(authorizationUrl);
 });
 
-// Callback do Mercado Livre
 app.get("/auth/mercadolivre/callback", async (req, res) => {
   const { code, state, error } = req.query;
 
@@ -124,7 +138,7 @@ app.get("/auth/mercadolivre/callback", async (req, res) => {
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
-      code: code,
+      code,
       redirect_uri: REDIRECT_URI,
       code_verifier: session.codeVerifier
     });
@@ -144,31 +158,96 @@ app.get("/auth/mercadolivre/callback", async (req, res) => {
     const tokenData = await tokenResponse.json();
 
     if (!tokenResponse.ok) {
-      console.error("Erro ao obter token:", tokenData);
+      console.error("Erro OAuth Mercado Livre:", tokenData);
 
       return res.status(tokenResponse.status).json({
         sucesso: false,
-        mensagem: "Mercado Livre recusou a troca do código pelo token.",
-        detalhe: tokenData
+        mensagem: "Mercado Livre recusou a troca do código pelo token."
       });
     }
 
-    // NÃO exibimos access_token nem refresh_token no navegador/log.
+    const expiresAt = new Date(
+      Date.now() + Number(tokenData.expires_in) * 1000
+    ).toISOString();
+
+    const marketplaceAccount = {
+      marketplace: "mercadolivre",
+      account_id: String(tokenData.user_id),
+      user_id: String(tokenData.user_id),
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expires_at: expiresAt
+    };
+
+    // Procura se essa conta já está cadastrada.
+    const { data: existing, error: searchError } =
+      await supabase
+        .from("marketplace_accounts")
+        .select("id")
+        .eq("marketplace", "mercadolivre")
+        .eq("account_id", String(tokenData.user_id))
+        .maybeSingle();
+
+    if (searchError) {
+      console.error("Erro consultando Supabase:", searchError);
+
+      return res.status(500).json({
+        sucesso: false,
+        mensagem: "Erro ao consultar o banco de dados."
+      });
+    }
+
+    if (existing) {
+      const { error: updateError } =
+        await supabase
+          .from("marketplace_accounts")
+          .update({
+            access_token: tokenData.access_token,
+            refresh_token: tokenData.refresh_token,
+            expires_at: expiresAt,
+            user_id: String(tokenData.user_id)
+          })
+          .eq("id", existing.id);
+
+      if (updateError) {
+        console.error("Erro atualizando tokens:", updateError);
+
+        return res.status(500).json({
+          sucesso: false,
+          mensagem: "Erro ao atualizar a conexão no banco."
+        });
+      }
+
+    } else {
+      const { error: insertError } =
+        await supabase
+          .from("marketplace_accounts")
+          .insert(marketplaceAccount);
+
+      if (insertError) {
+        console.error("Erro salvando tokens:", insertError);
+
+        return res.status(500).json({
+          sucesso: false,
+          mensagem: "Erro ao salvar a conexão no banco."
+        });
+      }
+    }
+
     console.log(
-      `Mercado Livre conectado. User ID: ${tokenData.user_id}`
+      `Mercado Livre conectado e salvo. User ID: ${tokenData.user_id}`
     );
 
     res.json({
       sucesso: true,
-      mensagem: "Mercado Livre conectado à Matrix AI Commerce 🚀",
+      mensagem:
+        "Mercado Livre conectado e salvo na Matrix AI Commerce 🚀",
       user_id: tokenData.user_id,
-      token_type: tokenData.token_type,
-      expires_in: tokenData.expires_in,
-      scope: tokenData.scope
+      expires_at: expiresAt
     });
 
   } catch (erro) {
-    console.error("Erro OAuth Mercado Livre:", erro);
+    console.error("Erro interno OAuth:", erro);
 
     res.status(500).json({
       sucesso: false,
