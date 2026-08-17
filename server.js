@@ -184,7 +184,6 @@ app.get("/auth/mercadolivre/callback", async (req, res) => {
       expires_at: expiresAt
     };
 
-    // Procura se essa conta já está cadastrada
     const { data: existing, error: searchError } =
       await supabase
         .from("marketplace_accounts")
@@ -326,6 +325,115 @@ app.get("/mercadolivre/me", async (req, res) => {
     res.status(500).json({
       sucesso: false,
       mensagem: "Erro interno ao consultar Mercado Livre."
+    });
+  }
+});
+
+// Consulta pedidos/vendas recentes do Mercado Livre
+app.get("/mercadolivre/orders", async (req, res) => {
+  try {
+    const limiteSolicitado = Number(req.query.limit || 20);
+    const limit = Math.min(
+      Math.max(limiteSolicitado, 1),
+      50
+    );
+
+    const { data: account, error } = await supabase
+      .from("marketplace_accounts")
+      .select("access_token, user_id")
+      .eq("marketplace", "mercadolivre")
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Erro buscando conta no Supabase:", error);
+
+      return res.status(500).json({
+        sucesso: false,
+        mensagem: "Erro ao buscar conta do Mercado Livre no banco."
+      });
+    }
+
+    if (!account) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Nenhuma conta do Mercado Livre conectada."
+      });
+    }
+
+    const params = new URLSearchParams({
+      seller: String(account.user_id),
+      sort: "date_desc",
+      limit: String(limit)
+    });
+
+    const mlResponse = await fetch(
+      `https://api.mercadolibre.com/orders/search?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${account.access_token}`,
+          accept: "application/json"
+        }
+      }
+    );
+
+    const mlData = await mlResponse.json();
+
+    if (!mlResponse.ok) {
+      console.error("Erro buscando pedidos no Mercado Livre:", mlData);
+
+      return res.status(mlResponse.status).json({
+        sucesso: false,
+        mensagem: "Mercado Livre recusou a consulta de pedidos.",
+        detalhe: mlData
+      });
+    }
+
+    const pedidos = Array.isArray(mlData.results)
+      ? mlData.results.map((pedido) => ({
+          id: pedido.id,
+          status: pedido.status,
+          date_created: pedido.date_created,
+          date_closed: pedido.date_closed,
+          total_amount: pedido.total_amount,
+          currency_id: pedido.currency_id,
+
+          comprador: pedido.buyer
+            ? {
+                id: pedido.buyer.id,
+                nickname: pedido.buyer.nickname
+              }
+            : null,
+
+          itens: Array.isArray(pedido.order_items)
+            ? pedido.order_items.map((item) => ({
+                item_id: item.item?.id,
+                titulo: item.item?.title,
+                quantidade: item.quantity,
+                preco_unitario: item.unit_price,
+                moeda: item.currency_id
+              }))
+            : [],
+
+          shipping_id: pedido.shipping?.id || null,
+          pack_id: pedido.pack_id || null
+        }))
+      : [];
+
+    res.json({
+      sucesso: true,
+      vendedor_id: account.user_id,
+      quantidade: pedidos.length,
+      paging: mlData.paging || null,
+      pedidos
+    });
+
+  } catch (erro) {
+    console.error("Erro /mercadolivre/orders:", erro);
+
+    res.status(500).json({
+      sucesso: false,
+      mensagem: "Erro interno ao consultar pedidos do Mercado Livre."
     });
   }
 });
