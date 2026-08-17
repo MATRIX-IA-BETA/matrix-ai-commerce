@@ -37,6 +37,7 @@ function base64url(buffer) {
     .replace(/=/g, "");
 }
 
+// Página inicial
 app.get("/", (req, res) => {
   res.json({
     status: "online",
@@ -45,6 +46,7 @@ app.get("/", (req, res) => {
   });
 });
 
+// Health check
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
@@ -52,12 +54,14 @@ app.get("/health", (req, res) => {
   });
 });
 
+// Webhook do Mercado Livre
 app.post("/webhooks/mercadolivre", (req, res) => {
   console.log("Notificação recebida do Mercado Livre");
 
   res.sendStatus(200);
 });
 
+// Inicia autorização do Mercado Livre
 app.get("/auth/mercadolivre", (req, res) => {
   if (
     !CLIENT_ID ||
@@ -105,6 +109,7 @@ app.get("/auth/mercadolivre", (req, res) => {
   res.redirect(authorizationUrl);
 });
 
+// Callback OAuth do Mercado Livre
 app.get("/auth/mercadolivre/callback", async (req, res) => {
   const { code, state, error } = req.query;
 
@@ -179,7 +184,7 @@ app.get("/auth/mercadolivre/callback", async (req, res) => {
       expires_at: expiresAt
     };
 
-    // Procura se essa conta já está cadastrada.
+    // Procura se essa conta já está cadastrada
     const { data: existing, error: searchError } =
       await supabase
         .from("marketplace_accounts")
@@ -252,6 +257,75 @@ app.get("/auth/mercadolivre/callback", async (req, res) => {
     res.status(500).json({
       sucesso: false,
       mensagem: "Erro interno durante autenticação do Mercado Livre."
+    });
+  }
+});
+
+// Consulta dados da conta conectada do Mercado Livre
+app.get("/mercadolivre/me", async (req, res) => {
+  try {
+    const { data: account, error } = await supabase
+      .from("marketplace_accounts")
+      .select("access_token, user_id")
+      .eq("marketplace", "mercadolivre")
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Erro buscando conta no Supabase:", error);
+
+      return res.status(500).json({
+        sucesso: false,
+        mensagem: "Erro ao buscar conta do Mercado Livre no banco."
+      });
+    }
+
+    if (!account) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Nenhuma conta do Mercado Livre conectada."
+      });
+    }
+
+    const mlResponse = await fetch(
+      `https://api.mercadolibre.com/users/${account.user_id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${account.access_token}`
+        }
+      }
+    );
+
+    const mlData = await mlResponse.json();
+
+    if (!mlResponse.ok) {
+      console.error("Erro API Mercado Livre:", mlData);
+
+      return res.status(mlResponse.status).json({
+        sucesso: false,
+        mensagem: "Mercado Livre recusou a consulta.",
+        detalhe: mlData
+      });
+    }
+
+    res.json({
+      sucesso: true,
+      vendedor: {
+        id: mlData.id,
+        nickname: mlData.nickname,
+        registration_date: mlData.registration_date,
+        country_id: mlData.country_id,
+        site_id: mlData.site_id,
+        seller_reputation: mlData.seller_reputation
+      }
+    });
+
+  } catch (erro) {
+    console.error("Erro /mercadolivre/me:", erro);
+
+    res.status(500).json({
+      sucesso: false,
+      mensagem: "Erro interno ao consultar Mercado Livre."
     });
   }
 });
