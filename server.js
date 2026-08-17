@@ -1075,151 +1075,129 @@ app.get(
 app.get(
   "/mercadolivre/sync-orders",
   async (req, res) => {
-
     try {
-      const requested =
-        Number(req.query.limit || 50);
+      const requested = Number(req.query.limit || 200);
+      const totalDesejado = Math.min(
+        Math.max(Number.isFinite(requested) ? requested : 200, 1),
+        2000
+      );
 
-      const limit =
-        Math.min(
-          Math.max(
-            Number.isFinite(requested)
-              ? requested
-              : 50,
-            1
-          ),
-          50
-        );
-
-      let account =
-        await getMercadoLivreAccount();
+      let account = await getMercadoLivreAccount();
 
       if (!account) {
-        return res
-          .status(404)
-          .json({
-            sucesso: false,
-            mensagem:
-              "Nenhuma conta Mercado Livre conectada."
-          });
+        return res.status(404).json({
+          sucesso: false,
+          mensagem: "Nenhuma conta Mercado Livre conectada."
+        });
       }
 
-      account =
-        await ensureValidMercadoLivreToken(
-          account
-        );
+      account = await ensureValidMercadoLivreToken(account);
 
-      const params =
-        new URLSearchParams({
-          seller:
-            String(
-              account.user_id
-            ),
+      const resultados = [];
+      let offset = 0;
+      let encontrados = 0;
+      let terminou = false;
 
-          sort:
-            "date_desc",
+      // A API do ML entrega no máximo 50 por página.
+      // Aqui fazemos paginação automática.
+      while (!terminou && encontrados < totalDesejado) {
+        const pageLimit = Math.min(50, totalDesejado - encontrados);
 
-          limit:
-            String(limit)
+        const params = new URLSearchParams({
+          seller: String(account.user_id),
+          sort: "date_desc",
+          limit: String(pageLimit),
+          offset: String(offset)
         });
 
-      const {
-        response,
-        account: contaAtualizada
-      } =
-        await mercadoLivreFetch(
+        const {
+          response,
+          account: contaAtualizada
+        } = await mercadoLivreFetch(
           `/orders/search?${params.toString()}`,
           account
         );
 
-      const data =
-        await response.json();
+        account = contaAtualizada;
 
-      if (!response.ok) {
-        return res
-          .status(response.status)
-          .json({
+        const data = await response.json();
+
+        if (!response.ok) {
+          return res.status(response.status).json({
             sucesso: false,
-            mensagem:
-              "Mercado Livre recusou a sincronização.",
-            detalhe:
-              data
+            mensagem: "Mercado Livre recusou a sincronização.",
+            detalhe: data,
+            encontrados,
+            sincronizados: resultados.filter(item => item.sucesso).length
           });
-      }
+        }
 
-      const pedidos =
-        Array.isArray(data.results)
+        const pedidos = Array.isArray(data.results)
           ? data.results
           : [];
 
-      const resultados = [];
+        if (pedidos.length === 0) {
+          terminou = true;
+          break;
+        }
 
-      for (
-        const pedido
-        of pedidos
-      ) {
-        try {
-          const salvo =
-            await salvarPedidoMercadoLivre(
+        encontrados += pedidos.length;
+
+        for (const pedido of pedidos) {
+          try {
+            const salvo = await salvarPedidoMercadoLivre(
               pedido,
-              contaAtualizada
+              account
             );
 
-          resultados.push({
-            sucesso: true,
-            ...salvo
-          });
+            resultados.push({
+              sucesso: true,
+              ...salvo
+            });
+          } catch (erroPedido) {
+            console.error(
+              `Erro pedido ${pedido.id}:`,
+              erroPedido
+            );
 
-        } catch (erroPedido) {
-          console.error(
-            `Erro pedido ${pedido.id}:`,
-            erroPedido
-          );
+            resultados.push({
+              sucesso: false,
+              marketplace_order_id: String(pedido.id),
+              erro: erroPedido.message
+            });
+          }
+        }
 
-          resultados.push({
-            sucesso: false,
-            marketplace_order_id:
-              String(pedido.id),
-            erro:
-              erroPedido.message
-          });
+        offset += pedidos.length;
+
+        const totalDisponivel = Number(data.paging?.total || 0);
+
+        if (
+          pedidos.length < pageLimit ||
+          (totalDisponivel > 0 && offset >= totalDisponivel)
+        ) {
+          terminou = true;
         }
       }
 
-      const comSucesso =
-        resultados.filter(
-          item =>
-            item.sucesso
-        ).length;
+      const comSucesso = resultados.filter(
+        item => item.sucesso
+      ).length;
 
-      const comErro =
-        resultados.length -
-        comSucesso;
+      const comErro = resultados.length - comSucesso;
 
       res.json({
-        sucesso:
-          comErro === 0,
-
-        mensagem:
-          "Sincronização concluída.",
-
-        encontrados:
-          pedidos.length,
-
-        sincronizados:
-          comSucesso,
-
-        erros:
-          comErro,
-
+        sucesso: comErro === 0,
+        mensagem: "Sincronização paginada concluída.",
+        solicitados: totalDesejado,
+        encontrados,
+        sincronizados: comSucesso,
+        erros: comErro,
+        proximo_offset: offset,
         resultados
       });
-
     } catch (erro) {
-      console.error(
-        "Erro sync-orders:",
-        erro
-      );
+      console.error("Erro sync-orders:", erro);
 
       res.status(500).json({
         sucesso: false,
@@ -1230,7 +1208,6 @@ app.get(
     }
   }
 );
-
 // =========================================================
 // SINCRONIZA UM PEDIDO ESPECÍFICO
 // =========================================================
@@ -1266,161 +1243,204 @@ app.get(
 );
 
 // =========================================================
-// DASHBOARD / RESUMO
+// DASHBOARD / RESUMO AVANÇADO
 // =========================================================
 
 app.get(
   "/dashboard/summary",
   async (req, res) => {
-
     try {
       const pageSize = 1000;
-
       let offset = 0;
       let terminou = false;
-
       const pedidos = [];
 
       while (!terminou) {
-        const {
-          data,
-          error
-        } =
-          await supabase
-            .from(
-              "marketplace_orders"
-            )
-            .select(
-              "status,total_amount,date_created,marketplace_order_id"
-            )
-            .eq(
-              "marketplace",
-              "mercadolivre"
-            )
-            .order(
-              "date_created",
-              {
-                ascending: false
-              }
-            )
-            .range(
-              offset,
-              offset + pageSize - 1
-            );
+        const { data, error } = await supabase
+          .from("marketplace_orders")
+          .select(
+            "id,status,total_amount,paid_amount,date_created,marketplace_order_id"
+          )
+          .eq("marketplace", "mercadolivre")
+          .order("date_created", { ascending: false })
+          .range(offset, offset + pageSize - 1);
 
         if (error) {
-          throw new Error(
-            `Erro dashboard: ${error.message}`
-          );
+          throw new Error(`Erro dashboard: ${error.message}`);
         }
 
-        const lote =
-          data || [];
+        const lote = data || [];
+        pedidos.push(...lote);
 
-        pedidos.push(
-          ...lote
-        );
-
-        if (
-          lote.length <
-          pageSize
-        ) {
+        if (lote.length < pageSize) {
           terminou = true;
         } else {
-          offset +=
-            pageSize;
+          offset += pageSize;
         }
       }
 
       const porStatus = {};
+      const vendasPorDia = {};
+      let faturamentoTotal = 0;
+      let faturamentoPago = 0;
+      let pedidosPagos = 0;
+      let pedidosCancelados = 0;
 
-      let faturamento = 0;
+      for (const pedido of pedidos) {
+        const status = pedido.status || "sem_status";
+        porStatus[status] = (porStatus[status] || 0) + 1;
 
-      for (
-        const pedido
-        of pedidos
-      ) {
-        const status =
-          pedido.status ||
-          "sem_status";
+        const total = Number(pedido.total_amount || 0);
+        const pago = Number(
+          pedido.paid_amount != null
+            ? pedido.paid_amount
+            : pedido.total_amount || 0
+        );
 
-        porStatus[status] =
-          (porStatus[status] || 0)
-          + 1;
+        if (Number.isFinite(total)) {
+          faturamentoTotal += total;
+        }
 
-        const valor =
-          Number(
-            pedido.total_amount ||
-            0
-          );
+        if (status === "paid") {
+          pedidosPagos += 1;
 
-        if (
-          Number.isFinite(valor)
-        ) {
-          faturamento +=
-            valor;
+          if (Number.isFinite(pago)) {
+            faturamentoPago += pago;
+          }
+
+          if (pedido.date_created) {
+            const dia = String(pedido.date_created).slice(0, 10);
+
+            if (!vendasPorDia[dia]) {
+              vendasPorDia[dia] = {
+                pedidos: 0,
+                faturamento: 0
+              };
+            }
+
+            vendasPorDia[dia].pedidos += 1;
+            vendasPorDia[dia].faturamento +=
+              Number.isFinite(pago) ? pago : 0;
+          }
+        }
+
+        if (status === "cancelled") {
+          pedidosCancelados += 1;
         }
       }
 
-      const ultimoPedido =
-        pedidos.length
-          ? pedidos[0]
-          : null;
+      const ticketMedio = pedidosPagos > 0
+        ? faturamentoPago / pedidosPagos
+        : 0;
+
+      const taxaCancelamento = pedidos.length > 0
+        ? (pedidosCancelados / pedidos.length) * 100
+        : 0;
+
+      // Ranking dos produtos usando os itens já sincronizados.
+      const { data: itens, error: itensError } = await supabase
+        .from("marketplace_order_items")
+        .select(
+          "order_id,item_id,title,quantity,unit_price,full_unit_price"
+        )
+        .eq("marketplace", "mercadolivre");
+
+      if (itensError) {
+        throw new Error(
+          `Erro buscando itens do dashboard: ${itensError.message}`
+        );
+      }
+
+      const idsPedidosPagos = new Set(
+        pedidos
+          .filter(p => p.status === "paid")
+          .map(p => String(p.id))
+      );
+
+      const produtos = {};
+
+      for (const item of itens || []) {
+        if (!idsPedidosPagos.has(String(item.order_id))) {
+          continue;
+        }
+
+        const chave = item.item_id || item.title || "sem_item";
+        const quantidade = Number(item.quantity || 0);
+        const preco = Number(
+          item.unit_price != null
+            ? item.unit_price
+            : item.full_unit_price || 0
+        );
+
+        if (!produtos[chave]) {
+          produtos[chave] = {
+            item_id: item.item_id || null,
+            titulo: item.title || "Sem título",
+            quantidade: 0,
+            faturamento: 0
+          };
+        }
+
+        produtos[chave].quantidade += quantidade;
+
+        if (Number.isFinite(preco)) {
+          produtos[chave].faturamento += quantidade * preco;
+        }
+      }
+
+      const rankingProdutos = Object.values(produtos)
+        .map(produto => ({
+          ...produto,
+          faturamento: Number(produto.faturamento.toFixed(2))
+        }))
+        .sort((a, b) => b.quantidade - a.quantidade)
+        .slice(0, 20);
+
+      const serieDiaria = Object.entries(vendasPorDia)
+        .map(([data, valores]) => ({
+          data,
+          pedidos: valores.pedidos,
+          faturamento: Number(valores.faturamento.toFixed(2))
+        }))
+        .sort((a, b) => a.data.localeCompare(b.data));
+
+      const ultimoPedido = pedidos.length
+        ? pedidos[0]
+        : null;
 
       res.json({
         sucesso: true,
-
-        marketplace:
-          "mercadolivre",
-
-        pedidos:
-          pedidos.length,
-
-        faturamento:
-          Number(
-            faturamento.toFixed(2)
-          ),
-
-        por_status:
-          porStatus,
-
-        ultimo_pedido:
-          ultimoPedido
-            ? {
-                id:
-                  ultimoPedido
-                    .marketplace_order_id,
-
-                status:
-                  ultimoPedido
-                    .status,
-
-                valor:
-                  ultimoPedido
-                    .total_amount,
-
-                data:
-                  ultimoPedido
-                    .date_created
-              }
-            : null
+        marketplace: "mercadolivre",
+        pedidos: pedidos.length,
+        pedidos_pagos: pedidosPagos,
+        pedidos_cancelados: pedidosCancelados,
+        faturamento: Number(faturamentoTotal.toFixed(2)),
+        faturamento_pago: Number(faturamentoPago.toFixed(2)),
+        ticket_medio: Number(ticketMedio.toFixed(2)),
+        taxa_cancelamento_percentual:
+          Number(taxaCancelamento.toFixed(2)),
+        por_status: porStatus,
+        vendas_por_dia: serieDiaria,
+        top_produtos: rankingProdutos,
+        ultimo_pedido: ultimoPedido
+          ? {
+              id: ultimoPedido.marketplace_order_id,
+              status: ultimoPedido.status,
+              valor: ultimoPedido.total_amount,
+              data: ultimoPedido.date_created
+            }
+          : null
       });
-
     } catch (erro) {
-      console.error(
-        "Erro dashboard:",
-        erro
-      );
+      console.error("Erro dashboard:", erro);
 
       res.status(500).json({
         sucesso: false,
-        mensagem:
-          erro.message
+        mensagem: erro.message
       });
     }
   }
 );
-
 // =========================================================
 // STATUS DA INTEGRAÇÃO
 // =========================================================
