@@ -25,8 +25,10 @@ const supabase = createClient(
   }
 );
 
-// Temporário.
-// Depois vamos mover isso para Redis/banco.
+// =========================================================
+// OAUTH TEMPORÁRIO
+// =========================================================
+
 const oauthSessions = new Map();
 
 function base64url(buffer) {
@@ -37,7 +39,393 @@ function base64url(buffer) {
     .replace(/=/g, "");
 }
 
-// Página inicial
+// =========================================================
+// FUNÇÕES AUXILIARES MERCADO LIVRE
+// =========================================================
+
+async function getMercadoLivreAccount(userId = null) {
+  let query = supabase
+    .from("marketplace_accounts")
+    .select(
+      "id, marketplace, account_id, user_id, access_token, refresh_token, expires_at"
+    )
+    .eq("marketplace", "mercadolivre");
+
+  if (userId) {
+    query = query.eq("user_id", String(userId));
+  }
+
+  const { data, error } = await query
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Erro buscando conta Mercado Livre: ${error.message}`
+    );
+  }
+
+  return data;
+}
+
+async function refreshMercadoLivreToken(account) {
+  if (!account) {
+    throw new Error("Conta Mercado Livre não encontrada.");
+  }
+
+  if (!account.refresh_token) {
+    throw new Error("Refresh token não encontrado.");
+  }
+
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    refresh_token: account.refresh_token
+  });
+
+  const response = await fetch(
+    "https://api.mercadolibre.com/oauth/token",
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString()
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro renovando token ML:", data);
+
+    throw new Error(
+      "Mercado Livre recusou a renovação do token."
+    );
+  }
+
+  const expiresAt = new Date(
+    Date.now() + Number(data.expires_in) * 1000
+  ).toISOString();
+
+  const novoRefreshToken =
+    data.refresh_token || account.refresh_token;
+
+  const { error } = await supabase
+    .from("marketplace_accounts")
+    .update({
+      access_token: data.access_token,
+      refresh_token: novoRefreshToken,
+      expires_at: expiresAt
+    })
+    .eq("id", account.id);
+
+  if (error) {
+    throw new Error(
+      `Erro salvando token renovado: ${error.message}`
+    );
+  }
+
+  console.log(
+    `Token Mercado Livre renovado para user ${account.user_id}`
+  );
+
+  return {
+    ...account,
+    access_token: data.access_token,
+    refresh_token: novoRefreshToken,
+    expires_at: expiresAt
+  };
+}
+
+async function ensureValidMercadoLivreToken(account) {
+  if (!account) {
+    throw new Error("Conta Mercado Livre não encontrada.");
+  }
+
+  if (!account.expires_at) {
+    return refreshMercadoLivreToken(account);
+  }
+
+  const expiresAt = new Date(account.expires_at).getTime();
+
+  // Renova se faltar menos de 5 minutos
+  const limite = Date.now() + 5 * 60 * 1000;
+
+  if (
+    !Number.isFinite(expiresAt) ||
+    expiresAt <= limite
+  ) {
+    return refreshMercadoLivreToken(account);
+  }
+
+  return account;
+}
+
+async function mercadoLivreFetch(
+  path,
+  account,
+  options = {}
+) {
+  let conta = await ensureValidMercadoLivreToken(account);
+
+  const url = path.startsWith("http")
+    ? path
+    : `https://api.mercadolibre.com${path}`;
+
+  let response = await fetch(url, {
+    ...options,
+    headers: {
+      accept: "application/json",
+      ...(options.headers || {}),
+      Authorization: `Bearer ${conta.access_token}`
+    }
+  });
+
+  // Se o ML devolver 401, tenta renovar uma vez
+  if (response.status === 401) {
+    conta = await refreshMercadoLivreToken(conta);
+
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        accept: "application/json",
+        ...(options.headers || {}),
+        Authorization: `Bearer ${conta.access_token}`
+      }
+    });
+  }
+
+  return {
+    response,
+    account: conta
+  };
+}
+
+// =========================================================
+// SINCRONIZA UM PEDIDO NO SUPABASE
+// =========================================================
+
+async function salvarPedidoMercadoLivre(pedido, account) {
+  const orderId = String(pedido.id);
+
+  const orderRecord = {
+    marketplace: "mercadolivre",
+    marketplace_order_id: orderId,
+
+    account_id: String(
+      account.account_id || account.user_id
+    ),
+
+    status: pedido.status || null,
+    status_detail: pedido.status_detail || null,
+
+    buyer_id:
+      pedido.buyer?.id != null
+        ? String(pedido.buyer.id)
+        : null,
+
+    buyer_nickname:
+      pedido.buyer?.nickname || null,
+
+    total_amount:
+      pedido.total_amount != null
+        ? pedido.total_amount
+        : null,
+
+    paid_amount:
+      pedido.paid_amount != null
+        ? pedido.paid_amount
+        : null,
+
+    currency_id:
+      pedido.currency_id || null,
+
+    shipping_id:
+      pedido.shipping?.id != null
+        ? String(pedido.shipping.id)
+        : null,
+
+    pack_id:
+      pedido.pack_id != null
+        ? String(pedido.pack_id)
+        : null,
+
+    date_created:
+      pedido.date_created || null,
+
+    date_closed:
+      pedido.date_closed || null,
+
+    date_last_updated:
+      pedido.last_updated ||
+      pedido.date_last_updated ||
+      null,
+
+    raw_data: pedido,
+
+    updated_at: new Date().toISOString()
+  };
+
+  const {
+    data: savedOrder,
+    error: orderError
+  } = await supabase
+    .from("marketplace_orders")
+    .upsert(
+      orderRecord,
+      {
+        onConflict:
+          "marketplace,marketplace_order_id"
+      }
+    )
+    .select("id")
+    .single();
+
+  if (orderError) {
+    throw new Error(
+      `Erro salvando pedido ${orderId}: ${orderError.message}`
+    );
+  }
+
+  const internalOrderId = savedOrder.id;
+
+  const itens = Array.isArray(pedido.order_items)
+    ? pedido.order_items
+    : [];
+
+  for (let index = 0; index < itens.length; index++) {
+    const item = itens[index];
+
+    const itemId =
+      item.item?.id != null
+        ? String(item.item.id)
+        : "sem_item";
+
+    const variationId =
+      item.item?.variation_id != null
+        ? String(item.item.variation_id)
+        : "0";
+
+    const externalLineId =
+      `${itemId}:${variationId}:${index}`;
+
+    const itemRecord = {
+      order_id: internalOrderId,
+      marketplace: "mercadolivre",
+
+      item_id:
+        item.item?.id != null
+          ? String(item.item.id)
+          : null,
+
+      variation_id:
+        item.item?.variation_id != null
+          ? String(item.item.variation_id)
+          : null,
+
+      external_line_id: externalLineId,
+
+      title:
+        item.item?.title || null,
+
+      quantity:
+        item.quantity != null
+          ? item.quantity
+          : null,
+
+      unit_price:
+        item.unit_price != null
+          ? item.unit_price
+          : null,
+
+      full_unit_price:
+        item.full_unit_price != null
+          ? item.full_unit_price
+          : null,
+
+      currency_id:
+        item.currency_id || null,
+
+      raw_data: item,
+
+      updated_at: new Date().toISOString()
+    };
+
+    const { error: itemError } = await supabase
+      .from("marketplace_order_items")
+      .upsert(
+        itemRecord,
+        {
+          onConflict:
+            "order_id,external_line_id"
+        }
+      );
+
+    if (itemError) {
+      throw new Error(
+        `Erro salvando item do pedido ${orderId}: ${itemError.message}`
+      );
+    }
+  }
+
+  return {
+    marketplace_order_id: orderId,
+    database_id: internalOrderId,
+    itens: itens.length
+  };
+}
+
+// =========================================================
+// BUSCA E SALVA UM PEDIDO ESPECÍFICO
+// =========================================================
+
+async function sincronizarPedidoPorId(
+  marketplaceOrderId,
+  account = null
+) {
+  let conta =
+    account || await getMercadoLivreAccount();
+
+  if (!conta) {
+    throw new Error(
+      "Nenhuma conta Mercado Livre conectada."
+    );
+  }
+
+  const {
+    response,
+    account: contaAtualizada
+  } = await mercadoLivreFetch(
+    `/orders/${marketplaceOrderId}`,
+    conta
+  );
+
+  const pedido = await response.json();
+
+  if (!response.ok) {
+    console.error(
+      "Erro buscando pedido individual:",
+      pedido
+    );
+
+    throw new Error(
+      `Mercado Livre recusou pedido ${marketplaceOrderId}`
+    );
+  }
+
+  return salvarPedidoMercadoLivre(
+    pedido,
+    contaAtualizada
+  );
+}
+
+// =========================================================
+// ROTAS BÁSICAS
+// =========================================================
+
 app.get("/", (req, res) => {
   res.json({
     status: "online",
@@ -46,398 +434,1051 @@ app.get("/", (req, res) => {
   });
 });
 
-// Health check
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
-    status: "healthy"
+    status: "healthy",
+    sistema: "Matrix AI Commerce"
   });
 });
 
-// Webhook do Mercado Livre
-app.post("/webhooks/mercadolivre", (req, res) => {
-  console.log("Notificação recebida do Mercado Livre");
+// =========================================================
+// WEBHOOK MERCADO LIVRE
+// =========================================================
 
-  res.sendStatus(200);
-});
+app.post(
+  "/webhooks/mercadolivre",
+  async (req, res) => {
 
-// Inicia autorização do Mercado Livre
-app.get("/auth/mercadolivre", (req, res) => {
-  if (
-    !CLIENT_ID ||
-    !CLIENT_SECRET ||
-    !REDIRECT_URI ||
-    !SUPABASE_URL ||
-    !SUPABASE_SECRET_KEY
-  ) {
-    return res.status(500).json({
-      sucesso: false,
-      mensagem: "Variáveis obrigatórias não configuradas."
-    });
-  }
+    // Responde IMEDIATAMENTE ao Mercado Livre
+    res.sendStatus(200);
 
-  const state = crypto.randomBytes(32).toString("hex");
-
-  const codeVerifier = base64url(
-    crypto.randomBytes(64)
-  );
-
-  const codeChallenge = base64url(
-    crypto
-      .createHash("sha256")
-      .update(codeVerifier)
-      .digest()
-  );
-
-  oauthSessions.set(state, {
-    codeVerifier,
-    criadoEm: Date.now()
-  });
-
-  const params = new URLSearchParams({
-    response_type: "code",
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    state,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256"
-  });
-
-  const authorizationUrl =
-    `https://auth.mercadolivre.com.br/authorization?${params.toString()}`;
-
-  res.redirect(authorizationUrl);
-});
-
-// Callback OAuth do Mercado Livre
-app.get("/auth/mercadolivre/callback", async (req, res) => {
-  const { code, state, error } = req.query;
-
-  if (error) {
-    return res.status(400).json({
-      sucesso: false,
-      erro: error
-    });
-  }
-
-  if (!code || !state) {
-    return res.status(400).json({
-      sucesso: false,
-      mensagem: "Code ou state não recebido."
-    });
-  }
-
-  const session = oauthSessions.get(state);
-
-  if (!session) {
-    return res.status(400).json({
-      sucesso: false,
-      mensagem: "State inválido ou sessão OAuth expirada."
-    });
-  }
-
-  oauthSessions.delete(state);
-
-  try {
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      code,
-      redirect_uri: REDIRECT_URI,
-      code_verifier: session.codeVerifier
-    });
-
-    const tokenResponse = await fetch(
-      "https://api.mercadolibre.com/oauth/token",
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "content-type": "application/x-www-form-urlencoded"
-        },
-        body: body.toString()
-      }
-    );
-
-    const tokenData = await tokenResponse.json();
-
-    if (!tokenResponse.ok) {
-      console.error("Erro OAuth Mercado Livre:", tokenData);
-
-      return res.status(tokenResponse.status).json({
-        sucesso: false,
-        mensagem: "Mercado Livre recusou a troca do código pelo token."
-      });
-    }
-
-    const expiresAt = new Date(
-      Date.now() + Number(tokenData.expires_in) * 1000
-    ).toISOString();
-
-    const marketplaceAccount = {
-      marketplace: "mercadolivre",
-      account_id: String(tokenData.user_id),
-      user_id: String(tokenData.user_id),
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token,
-      expires_at: expiresAt
-    };
-
-    const { data: existing, error: searchError } =
-      await supabase
-        .from("marketplace_accounts")
-        .select("id")
-        .eq("marketplace", "mercadolivre")
-        .eq("account_id", String(tokenData.user_id))
-        .maybeSingle();
-
-    if (searchError) {
-      console.error("Erro consultando Supabase:", searchError);
-
-      return res.status(500).json({
-        sucesso: false,
-        mensagem: "Erro ao consultar o banco de dados."
-      });
-    }
-
-    if (existing) {
-      const { error: updateError } =
-        await supabase
-          .from("marketplace_accounts")
-          .update({
-            access_token: tokenData.access_token,
-            refresh_token: tokenData.refresh_token,
-            expires_at: expiresAt,
-            user_id: String(tokenData.user_id)
-          })
-          .eq("id", existing.id);
-
-      if (updateError) {
-        console.error("Erro atualizando tokens:", updateError);
-
-        return res.status(500).json({
-          sucesso: false,
-          mensagem: "Erro ao atualizar a conexão no banco."
-        });
-      }
-
-    } else {
-      const { error: insertError } =
-        await supabase
-          .from("marketplace_accounts")
-          .insert(marketplaceAccount);
-
-      if (insertError) {
-        console.error("Erro salvando tokens:", insertError);
-
-        return res.status(500).json({
-          sucesso: false,
-          mensagem: "Erro ao salvar a conexão no banco."
-        });
-      }
-    }
+    const payload = req.body || {};
 
     console.log(
-      `Mercado Livre conectado e salvo. User ID: ${tokenData.user_id}`
+      "Notificação Mercado Livre:",
+      payload.topic,
+      payload.resource
     );
 
-    res.json({
-      sucesso: true,
-      mensagem:
-        "Mercado Livre conectado e salvo na Matrix AI Commerce 🚀",
-      user_id: tokenData.user_id,
-      expires_at: expiresAt
-    });
+    try {
+      const {
+        data: event,
+        error: eventError
+      } = await supabase
+        .from("marketplace_webhook_events")
+        .insert({
+          marketplace: "mercadolivre",
 
-  } catch (erro) {
-    console.error("Erro interno OAuth:", erro);
+          topic:
+            payload.topic || null,
 
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro interno durante autenticação do Mercado Livre."
-    });
+          resource:
+            payload.resource || null,
+
+          user_id:
+            payload.user_id != null
+              ? String(payload.user_id)
+              : null,
+
+          application_id:
+            payload.application_id != null
+              ? String(payload.application_id)
+              : null,
+
+          payload,
+
+          processed: false
+        })
+        .select("id")
+        .single();
+
+      if (eventError) {
+        console.error(
+          "Erro gravando webhook:",
+          eventError
+        );
+
+        return;
+      }
+
+      try {
+        const resource =
+          String(payload.resource || "");
+
+        // Eventos relacionados a pedidos
+        if (
+          resource.startsWith("/orders/") ||
+          payload.topic === "orders_v2"
+        ) {
+          const match =
+            resource.match(/\/orders\/(\d+)/);
+
+          if (match && match[1]) {
+            await sincronizarPedidoPorId(
+              match[1]
+            );
+          }
+        }
+
+        await supabase
+          .from("marketplace_webhook_events")
+          .update({
+            processed: true,
+            processed_at:
+              new Date().toISOString(),
+            error_message: null
+          })
+          .eq("id", event.id);
+
+      } catch (processError) {
+        console.error(
+          "Erro processando webhook:",
+          processError
+        );
+
+        await supabase
+          .from("marketplace_webhook_events")
+          .update({
+            processed: false,
+            processed_at:
+              new Date().toISOString(),
+            error_message:
+              String(processError.message)
+                .slice(0, 1000)
+          })
+          .eq("id", event.id);
+      }
+
+    } catch (erro) {
+      console.error(
+        "Erro geral webhook ML:",
+        erro
+      );
+    }
   }
-});
+);
 
-// Consulta dados da conta conectada do Mercado Livre
-app.get("/mercadolivre/me", async (req, res) => {
-  try {
-    const { data: account, error } = await supabase
-      .from("marketplace_accounts")
-      .select("access_token, user_id")
-      .eq("marketplace", "mercadolivre")
-      .limit(1)
-      .maybeSingle();
+// =========================================================
+// OAUTH MERCADO LIVRE
+// =========================================================
 
-    if (error) {
-      console.error("Erro buscando conta no Supabase:", error);
+app.get(
+  "/auth/mercadolivre",
+  (req, res) => {
 
+    if (
+      !CLIENT_ID ||
+      !CLIENT_SECRET ||
+      !REDIRECT_URI ||
+      !SUPABASE_URL ||
+      !SUPABASE_SECRET_KEY
+    ) {
       return res.status(500).json({
         sucesso: false,
-        mensagem: "Erro ao buscar conta do Mercado Livre no banco."
+        mensagem:
+          "Variáveis obrigatórias não configuradas."
       });
     }
 
-    if (!account) {
-      return res.status(404).json({
-        sucesso: false,
-        mensagem: "Nenhuma conta do Mercado Livre conectada."
-      });
-    }
+    const state =
+      crypto.randomBytes(32).toString("hex");
 
-    const mlResponse = await fetch(
-      `https://api.mercadolibre.com/users/${account.user_id}`,
+    const codeVerifier =
+      base64url(
+        crypto.randomBytes(64)
+      );
+
+    const codeChallenge =
+      base64url(
+        crypto
+          .createHash("sha256")
+          .update(codeVerifier)
+          .digest()
+      );
+
+    oauthSessions.set(
+      state,
       {
-        headers: {
-          Authorization: `Bearer ${account.access_token}`
-        }
+        codeVerifier,
+        criadoEm: Date.now()
       }
     );
 
-    const mlData = await mlResponse.json();
-
-    if (!mlResponse.ok) {
-      console.error("Erro API Mercado Livre:", mlData);
-
-      return res.status(mlResponse.status).json({
-        sucesso: false,
-        mensagem: "Mercado Livre recusou a consulta.",
-        detalhe: mlData
+    const params =
+      new URLSearchParams({
+        response_type: "code",
+        client_id: CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        state,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256"
       });
-    }
 
-    res.json({
-      sucesso: true,
-      vendedor: {
-        id: mlData.id,
-        nickname: mlData.nickname,
-        registration_date: mlData.registration_date,
-        country_id: mlData.country_id,
-        site_id: mlData.site_id,
-        seller_reputation: mlData.seller_reputation
-      }
-    });
+    const authorizationUrl =
+      `https://auth.mercadolivre.com.br/authorization?${params.toString()}`;
 
-  } catch (erro) {
-    console.error("Erro /mercadolivre/me:", erro);
-
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro interno ao consultar Mercado Livre."
-    });
+    res.redirect(authorizationUrl);
   }
-});
+);
 
-// Consulta pedidos/vendas recentes do Mercado Livre
-app.get("/mercadolivre/orders", async (req, res) => {
-  try {
-    const limiteSolicitado = Number(req.query.limit || 20);
-    const limit = Math.min(
-      Math.max(limiteSolicitado, 1),
-      50
-    );
+app.get(
+  "/auth/mercadolivre/callback",
+  async (req, res) => {
 
-    const { data: account, error } = await supabase
-      .from("marketplace_accounts")
-      .select("access_token, user_id")
-      .eq("marketplace", "mercadolivre")
-      .limit(1)
-      .maybeSingle();
+    const {
+      code,
+      state,
+      error
+    } = req.query;
 
     if (error) {
-      console.error("Erro buscando conta no Supabase:", error);
-
-      return res.status(500).json({
+      return res.status(400).json({
         sucesso: false,
-        mensagem: "Erro ao buscar conta do Mercado Livre no banco."
+        erro: error
       });
     }
 
-    if (!account) {
-      return res.status(404).json({
+    if (!code || !state) {
+      return res.status(400).json({
         sucesso: false,
-        mensagem: "Nenhuma conta do Mercado Livre conectada."
+        mensagem:
+          "Code ou state não recebido."
       });
     }
 
-    const params = new URLSearchParams({
-      seller: String(account.user_id),
-      sort: "date_desc",
-      limit: String(limit)
-    });
+    const session =
+      oauthSessions.get(state);
 
-    const mlResponse = await fetch(
-      `https://api.mercadolibre.com/orders/search?${params.toString()}`,
-      {
-        headers: {
-          Authorization: `Bearer ${account.access_token}`,
-          accept: "application/json"
+    if (!session) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem:
+          "State inválido ou sessão OAuth expirada."
+      });
+    }
+
+    oauthSessions.delete(state);
+
+    try {
+      const body =
+        new URLSearchParams({
+          grant_type:
+            "authorization_code",
+
+          client_id:
+            CLIENT_ID,
+
+          client_secret:
+            CLIENT_SECRET,
+
+          code,
+
+          redirect_uri:
+            REDIRECT_URI,
+
+          code_verifier:
+            session.codeVerifier
+        });
+
+      const tokenResponse =
+        await fetch(
+          "https://api.mercadolibre.com/oauth/token",
+          {
+            method: "POST",
+
+            headers: {
+              accept:
+                "application/json",
+
+              "content-type":
+                "application/x-www-form-urlencoded"
+            },
+
+            body:
+              body.toString()
+          }
+        );
+
+      const tokenData =
+        await tokenResponse.json();
+
+      if (!tokenResponse.ok) {
+        console.error(
+          "Erro OAuth Mercado Livre:",
+          tokenData
+        );
+
+        return res
+          .status(tokenResponse.status)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Mercado Livre recusou a troca do código pelo token."
+          });
+      }
+
+      const expiresAt =
+        new Date(
+          Date.now() +
+          Number(
+            tokenData.expires_in
+          ) * 1000
+        ).toISOString();
+
+      const marketplaceAccount = {
+        marketplace:
+          "mercadolivre",
+
+        account_id:
+          String(tokenData.user_id),
+
+        user_id:
+          String(tokenData.user_id),
+
+        access_token:
+          tokenData.access_token,
+
+        refresh_token:
+          tokenData.refresh_token,
+
+        expires_at:
+          expiresAt
+      };
+
+      const {
+        data: existing,
+        error: searchError
+      } =
+        await supabase
+          .from(
+            "marketplace_accounts"
+          )
+          .select("id")
+          .eq(
+            "marketplace",
+            "mercadolivre"
+          )
+          .eq(
+            "account_id",
+            String(
+              tokenData.user_id
+            )
+          )
+          .maybeSingle();
+
+      if (searchError) {
+        console.error(
+          "Erro consultando Supabase:",
+          searchError
+        );
+
+        return res
+          .status(500)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Erro ao consultar o banco de dados."
+          });
+      }
+
+      if (existing) {
+        const {
+          error: updateError
+        } =
+          await supabase
+            .from(
+              "marketplace_accounts"
+            )
+            .update({
+              access_token:
+                tokenData.access_token,
+
+              refresh_token:
+                tokenData.refresh_token,
+
+              expires_at:
+                expiresAt,
+
+              user_id:
+                String(
+                  tokenData.user_id
+                )
+            })
+            .eq(
+              "id",
+              existing.id
+            );
+
+        if (updateError) {
+          console.error(
+            "Erro atualizando tokens:",
+            updateError
+          );
+
+          return res
+            .status(500)
+            .json({
+              sucesso: false,
+              mensagem:
+                "Erro ao atualizar a conexão no banco."
+            });
+        }
+
+      } else {
+        const {
+          error: insertError
+        } =
+          await supabase
+            .from(
+              "marketplace_accounts"
+            )
+            .insert(
+              marketplaceAccount
+            );
+
+        if (insertError) {
+          console.error(
+            "Erro salvando tokens:",
+            insertError
+          );
+
+          return res
+            .status(500)
+            .json({
+              sucesso: false,
+              mensagem:
+                "Erro ao salvar a conexão no banco."
+            });
         }
       }
-    );
 
-    const mlData = await mlResponse.json();
+      console.log(
+        `Mercado Livre conectado e salvo. User ID: ${tokenData.user_id}`
+      );
 
-    if (!mlResponse.ok) {
-      console.error("Erro buscando pedidos no Mercado Livre:", mlData);
+      res.json({
+        sucesso: true,
+        mensagem:
+          "Mercado Livre conectado e salvo na Matrix AI Commerce 🚀",
 
-      return res.status(mlResponse.status).json({
+        user_id:
+          tokenData.user_id,
+
+        expires_at:
+          expiresAt
+      });
+
+    } catch (erroInterno) {
+      console.error(
+        "Erro interno OAuth:",
+        erroInterno
+      );
+
+      res.status(500).json({
         sucesso: false,
-        mensagem: "Mercado Livre recusou a consulta de pedidos.",
-        detalhe: mlData
+        mensagem:
+          "Erro interno durante autenticação do Mercado Livre."
       });
     }
+  }
+);
 
-    const pedidos = Array.isArray(mlData.results)
-      ? mlData.results.map((pedido) => ({
-          id: pedido.id,
-          status: pedido.status,
-          date_created: pedido.date_created,
-          date_closed: pedido.date_closed,
-          total_amount: pedido.total_amount,
-          currency_id: pedido.currency_id,
+// =========================================================
+// DADOS DO VENDEDOR
+// =========================================================
 
-          comprador: pedido.buyer
-            ? {
-                id: pedido.buyer.id,
-                nickname: pedido.buyer.nickname
+app.get(
+  "/mercadolivre/me",
+  async (req, res) => {
+
+    try {
+      let account =
+        await getMercadoLivreAccount();
+
+      if (!account) {
+        return res
+          .status(404)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Nenhuma conta do Mercado Livre conectada."
+          });
+      }
+
+      const {
+        response
+      } =
+        await mercadoLivreFetch(
+          `/users/${account.user_id}`,
+          account
+        );
+
+      const mlData =
+        await response.json();
+
+      if (!response.ok) {
+        return res
+          .status(response.status)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Mercado Livre recusou a consulta.",
+            detalhe: mlData
+          });
+      }
+
+      res.json({
+        sucesso: true,
+
+        vendedor: {
+          id:
+            mlData.id,
+
+          nickname:
+            mlData.nickname,
+
+          registration_date:
+            mlData.registration_date,
+
+          country_id:
+            mlData.country_id,
+
+          site_id:
+            mlData.site_id,
+
+          seller_reputation:
+            mlData.seller_reputation
+        }
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro /mercadolivre/me:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message ||
+          "Erro interno ao consultar Mercado Livre."
+      });
+    }
+  }
+);
+
+// =========================================================
+// LISTA PEDIDOS DO MERCADO LIVRE
+// =========================================================
+
+app.get(
+  "/mercadolivre/orders",
+  async (req, res) => {
+
+    try {
+      const requested =
+        Number(req.query.limit || 20);
+
+      const limit =
+        Math.min(
+          Math.max(
+            Number.isFinite(requested)
+              ? requested
+              : 20,
+            1
+          ),
+          50
+        );
+
+      const account =
+        await getMercadoLivreAccount();
+
+      if (!account) {
+        return res
+          .status(404)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Nenhuma conta Mercado Livre conectada."
+          });
+      }
+
+      const params =
+        new URLSearchParams({
+          seller:
+            String(
+              account.user_id
+            ),
+
+          sort:
+            "date_desc",
+
+          limit:
+            String(limit)
+        });
+
+      const {
+        response
+      } =
+        await mercadoLivreFetch(
+          `/orders/search?${params.toString()}`,
+          account
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        return res
+          .status(response.status)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Mercado Livre recusou a consulta de pedidos.",
+            detalhe:
+              data
+          });
+      }
+
+      res.json({
+        sucesso: true,
+        quantidade:
+          data.results?.length || 0,
+
+        paging:
+          data.paging || null,
+
+        pedidos:
+          data.results || []
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro orders:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message
+      });
+    }
+  }
+);
+
+// =========================================================
+// SINCRONIZA PEDIDOS PARA SUPABASE
+// =========================================================
+
+app.get(
+  "/mercadolivre/sync-orders",
+  async (req, res) => {
+
+    try {
+      const requested =
+        Number(req.query.limit || 50);
+
+      const limit =
+        Math.min(
+          Math.max(
+            Number.isFinite(requested)
+              ? requested
+              : 50,
+            1
+          ),
+          50
+        );
+
+      let account =
+        await getMercadoLivreAccount();
+
+      if (!account) {
+        return res
+          .status(404)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Nenhuma conta Mercado Livre conectada."
+          });
+      }
+
+      account =
+        await ensureValidMercadoLivreToken(
+          account
+        );
+
+      const params =
+        new URLSearchParams({
+          seller:
+            String(
+              account.user_id
+            ),
+
+          sort:
+            "date_desc",
+
+          limit:
+            String(limit)
+        });
+
+      const {
+        response,
+        account: contaAtualizada
+      } =
+        await mercadoLivreFetch(
+          `/orders/search?${params.toString()}`,
+          account
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        return res
+          .status(response.status)
+          .json({
+            sucesso: false,
+            mensagem:
+              "Mercado Livre recusou a sincronização.",
+            detalhe:
+              data
+          });
+      }
+
+      const pedidos =
+        Array.isArray(data.results)
+          ? data.results
+          : [];
+
+      const resultados = [];
+
+      for (
+        const pedido
+        of pedidos
+      ) {
+        try {
+          const salvo =
+            await salvarPedidoMercadoLivre(
+              pedido,
+              contaAtualizada
+            );
+
+          resultados.push({
+            sucesso: true,
+            ...salvo
+          });
+
+        } catch (erroPedido) {
+          console.error(
+            `Erro pedido ${pedido.id}:`,
+            erroPedido
+          );
+
+          resultados.push({
+            sucesso: false,
+            marketplace_order_id:
+              String(pedido.id),
+            erro:
+              erroPedido.message
+          });
+        }
+      }
+
+      const comSucesso =
+        resultados.filter(
+          item =>
+            item.sucesso
+        ).length;
+
+      const comErro =
+        resultados.length -
+        comSucesso;
+
+      res.json({
+        sucesso:
+          comErro === 0,
+
+        mensagem:
+          "Sincronização concluída.",
+
+        encontrados:
+          pedidos.length,
+
+        sincronizados:
+          comSucesso,
+
+        erros:
+          comErro,
+
+        resultados
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro sync-orders:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message ||
+          "Erro interno na sincronização."
+      });
+    }
+  }
+);
+
+// =========================================================
+// SINCRONIZA UM PEDIDO ESPECÍFICO
+// =========================================================
+
+app.get(
+  "/mercadolivre/sync-order/:id",
+  async (req, res) => {
+
+    try {
+      const resultado =
+        await sincronizarPedidoPorId(
+          req.params.id
+        );
+
+      res.json({
+        sucesso: true,
+        resultado
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro sync-order:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message
+      });
+    }
+  }
+);
+
+// =========================================================
+// DASHBOARD / RESUMO
+// =========================================================
+
+app.get(
+  "/dashboard/summary",
+  async (req, res) => {
+
+    try {
+      const pageSize = 1000;
+
+      let offset = 0;
+      let terminou = false;
+
+      const pedidos = [];
+
+      while (!terminou) {
+        const {
+          data,
+          error
+        } =
+          await supabase
+            .from(
+              "marketplace_orders"
+            )
+            .select(
+              "status,total_amount,date_created,marketplace_order_id"
+            )
+            .eq(
+              "marketplace",
+              "mercadolivre"
+            )
+            .order(
+              "date_created",
+              {
+                ascending: false
               }
-            : null,
+            )
+            .range(
+              offset,
+              offset + pageSize - 1
+            );
 
-          itens: Array.isArray(pedido.order_items)
-            ? pedido.order_items.map((item) => ({
-                item_id: item.item?.id,
-                titulo: item.item?.title,
-                quantidade: item.quantity,
-                preco_unitario: item.unit_price,
-                moeda: item.currency_id
-              }))
-            : [],
+        if (error) {
+          throw new Error(
+            `Erro dashboard: ${error.message}`
+          );
+        }
 
-          shipping_id: pedido.shipping?.id || null,
-          pack_id: pedido.pack_id || null
-        }))
-      : [];
+        const lote =
+          data || [];
 
-    res.json({
-      sucesso: true,
-      vendedor_id: account.user_id,
-      quantidade: pedidos.length,
-      paging: mlData.paging || null,
-      pedidos
-    });
+        pedidos.push(
+          ...lote
+        );
 
-  } catch (erro) {
-    console.error("Erro /mercadolivre/orders:", erro);
+        if (
+          lote.length <
+          pageSize
+        ) {
+          terminou = true;
+        } else {
+          offset +=
+            pageSize;
+        }
+      }
 
-    res.status(500).json({
-      sucesso: false,
-      mensagem: "Erro interno ao consultar pedidos do Mercado Livre."
-    });
+      const porStatus = {};
+
+      let faturamento = 0;
+
+      for (
+        const pedido
+        of pedidos
+      ) {
+        const status =
+          pedido.status ||
+          "sem_status";
+
+        porStatus[status] =
+          (porStatus[status] || 0)
+          + 1;
+
+        const valor =
+          Number(
+            pedido.total_amount ||
+            0
+          );
+
+        if (
+          Number.isFinite(valor)
+        ) {
+          faturamento +=
+            valor;
+        }
+      }
+
+      const ultimoPedido =
+        pedidos.length
+          ? pedidos[0]
+          : null;
+
+      res.json({
+        sucesso: true,
+
+        marketplace:
+          "mercadolivre",
+
+        pedidos:
+          pedidos.length,
+
+        faturamento:
+          Number(
+            faturamento.toFixed(2)
+          ),
+
+        por_status:
+          porStatus,
+
+        ultimo_pedido:
+          ultimoPedido
+            ? {
+                id:
+                  ultimoPedido
+                    .marketplace_order_id,
+
+                status:
+                  ultimoPedido
+                    .status,
+
+                valor:
+                  ultimoPedido
+                    .total_amount,
+
+                data:
+                  ultimoPedido
+                    .date_created
+              }
+            : null
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro dashboard:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message
+      });
+    }
   }
-});
+);
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Matrix AI Commerce rodando na porta ${PORT}`);
-});
+// =========================================================
+// STATUS DA INTEGRAÇÃO
+// =========================================================
+
+app.get(
+  "/mercadolivre/status",
+  async (req, res) => {
+
+    try {
+      const account =
+        await getMercadoLivreAccount();
+
+      if (!account) {
+        return res.json({
+          sucesso: true,
+          conectado: false
+        });
+      }
+
+      res.json({
+        sucesso: true,
+        conectado: true,
+
+        user_id:
+          account.user_id,
+
+        expires_at:
+          account.expires_at,
+
+        token_expirado:
+          account.expires_at
+            ? new Date(
+                account.expires_at
+              ).getTime() <=
+              Date.now()
+            : null
+      });
+
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message
+      });
+    }
+  }
+);
+
+// =========================================================
+// SERVIDOR
+// =========================================================
+
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `Matrix AI Commerce rodando na porta ${PORT}`
+    );
+  }
+);
