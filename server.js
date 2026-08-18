@@ -13,12 +13,11 @@ const REDIRECT_URI = process.env.MERCADOLIVRE_REDIRECT_URI;
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY;
-
-// WhatsApp Business Cloud API
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
 const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || "v23.0";
+
 
 const supabase = createClient(
   SUPABASE_URL,
@@ -588,131 +587,6 @@ app.get("/health", (req, res) => {
     status: "healthy",
     sistema: "Matrix AI Commerce"
   });
-});
-
-// =========================================================
-// WHATSAPP BUSINESS CLOUD API
-// =========================================================
-
-// Verificação do webhook feita pela Meta ao salvar a URL de callback.
-app.get("/webhooks/whatsapp", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (!WHATSAPP_VERIFY_TOKEN) {
-    console.error("WHATSAPP_VERIFY_TOKEN não configurado.");
-    return res.sendStatus(500);
-  }
-
-  if (mode === "subscribe" && token === WHATSAPP_VERIFY_TOKEN) {
-    console.log("Webhook WhatsApp verificado com sucesso.");
-    return res.status(200).send(challenge);
-  }
-
-  console.warn("Falha na verificação do webhook WhatsApp.");
-  return res.sendStatus(403);
-});
-
-// Recebe mensagens e atualizações de status do WhatsApp.
-app.post("/webhooks/whatsapp", async (req, res) => {
-  // A Meta espera resposta rápida; processamos depois do 200.
-  res.sendStatus(200);
-
-  try {
-    const body = req.body || {};
-    const entries = Array.isArray(body.entry) ? body.entry : [];
-
-    for (const entry of entries) {
-      const changes = Array.isArray(entry.changes) ? entry.changes : [];
-
-      for (const change of changes) {
-        const value = change?.value || {};
-        const messages = Array.isArray(value.messages) ? value.messages : [];
-        const statuses = Array.isArray(value.statuses) ? value.statuses : [];
-
-        for (const message of messages) {
-          console.log("WhatsApp mensagem recebida:", {
-            from: message.from || null,
-            id: message.id || null,
-            type: message.type || null,
-            text: message.text?.body || null
-          });
-        }
-
-        for (const status of statuses) {
-          console.log("WhatsApp status:", {
-            id: status.id || null,
-            status: status.status || null,
-            recipient_id: status.recipient_id || null
-          });
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Erro processando webhook WhatsApp:", error);
-  }
-});
-
-// Envio de mensagem de texto pelo número configurado na Cloud API.
-async function enviarMensagemWhatsApp(to, text) {
-  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
-    throw new Error(
-      "WHATSAPP_ACCESS_TOKEN/WHATSAPP_PHONE_NUMBER_ID não configurados."
-    );
-  }
-
-  const response = await fetch(
-    `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: String(to),
-        type: "text",
-        text: { body: String(text) }
-      })
-    }
-  );
-
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(
-      `WhatsApp API ${response.status}: ${JSON.stringify(data)}`
-    );
-  }
-
-  return data;
-}
-
-// Endpoint interno para testar envio depois que o número real/token estiverem configurados.
-app.post("/whatsapp/send", async (req, res) => {
-  try {
-    const { to, text } = req.body || {};
-
-    if (!to || !text) {
-      return res.status(400).json({
-        sucesso: false,
-        mensagem: "Informe to e text."
-      });
-    }
-
-    const data = await enviarMensagemWhatsApp(to, text);
-
-    return res.json({ sucesso: true, data });
-  } catch (error) {
-    console.error("Erro enviando WhatsApp:", error);
-    return res.status(500).json({
-      sucesso: false,
-      mensagem: error.message
-    });
-  }
 });
 
 // =========================================================
