@@ -1068,6 +1068,86 @@ app.get(
   }
 );
 
+
+// =========================================================
+// DETALHE DE UM PEDIDO
+// =========================================================
+
+app.get(
+  "/mercadolivre/orders/:id",
+  async (req, res) => {
+    try {
+      const marketplaceOrderId = String(req.params.id);
+
+      const {
+        data: pedido,
+        error: pedidoError
+      } = await supabase
+        .from("marketplace_orders")
+        .select("*")
+        .eq("marketplace", "mercadolivre")
+        .eq("marketplace_order_id", marketplaceOrderId)
+        .maybeSingle();
+
+      if (pedidoError) {
+        throw new Error(
+          `Erro buscando pedido: ${pedidoError.message}`
+        );
+      }
+
+      if (!pedido) {
+        return res.status(404).json({
+          sucesso: false,
+          mensagem: "Pedido não encontrado."
+        });
+      }
+
+      const {
+        data: itens,
+        error: itensError
+      } = await supabase
+        .from("marketplace_order_items")
+        .select("*")
+        .eq("order_id", pedido.id)
+        .order("id", { ascending: true });
+
+      if (itensError) {
+        throw new Error(
+          `Erro buscando itens do pedido: ${itensError.message}`
+        );
+      }
+
+      const buyerJson =
+        pedido.raw_data?.buyer || {
+          id: pedido.buyer_id || null,
+          nickname: pedido.buyer_nickname || null
+        };
+
+      res.json({
+        sucesso: true,
+        pedido: {
+          ...pedido,
+          buyer_json: buyerJson
+        },
+        itens: itens || []
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro detalhe do pedido:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message ||
+          "Erro interno ao consultar pedido."
+      });
+    }
+  }
+);
+
 // =========================================================
 // SINCRONIZA PEDIDOS PARA SUPABASE
 // =========================================================
