@@ -422,6 +422,148 @@ async function sincronizarPedidoPorId(
   );
 }
 
+
+// =========================================================
+// FUNÇÕES AUXILIARES DE PERÍODO / TAXAS / FRETE
+// =========================================================
+
+function normalizeDateStart(value) {
+  if (!value) return null;
+
+  const date = new Date(`${value}T00:00:00-03:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
+function normalizeDateEnd(value) {
+  if (!value) return null;
+
+  const date = new Date(`${value}T23:59:59.999-03:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
+function extrairFinanceiroPedido(pedido, itens = [], shipmentCosts = null) {
+  const raw = pedido?.raw_data || {};
+  const payments = Array.isArray(raw.payments) ? raw.payments : [];
+
+  let comissao = 0;
+  let encontrouComissao = false;
+
+  for (const payment of payments) {
+    const marketplaceFee = Number(payment?.marketplace_fee);
+
+    if (Number.isFinite(marketplaceFee)) {
+      comissao += Math.abs(marketplaceFee);
+      encontrouComissao = true;
+    }
+  }
+
+  if (!encontrouComissao) {
+    for (const item of itens) {
+      const saleFee = Number(
+        item?.raw_data?.sale_fee ??
+        item?.raw_data?.item?.sale_fee
+      );
+
+      if (Number.isFinite(saleFee)) {
+        comissao += Math.abs(saleFee);
+        encontrouComissao = true;
+      }
+    }
+  }
+
+  let frete = null;
+
+  const senderCost = Number(shipmentCosts?.sender?.cost);
+  const senderSave = Number(shipmentCosts?.sender?.save);
+
+  if (Number.isFinite(senderCost)) {
+    frete = Math.max(
+      0,
+      senderCost - (Number.isFinite(senderSave) ? senderSave : 0)
+    );
+  }
+
+  if (frete == null) {
+    const shippingCostCandidates = [
+      raw?.shipping?.cost,
+      raw?.shipping?.seller_cost,
+      raw?.shipping?.shipping_cost,
+      raw?.shipping_cost
+    ];
+
+    for (const candidate of shippingCostCandidates) {
+      const value = Number(candidate);
+
+      if (Number.isFinite(value)) {
+        frete = Math.abs(value);
+        break;
+      }
+    }
+  }
+
+  let valorLiquido = null;
+  let liquidoEstimado = false;
+
+  for (const payment of payments) {
+    const candidates = [
+      payment?.transaction_details?.net_received_amount,
+      payment?.net_received_amount
+    ];
+
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+
+      if (Number.isFinite(value)) {
+        valorLiquido = (valorLiquido || 0) + value;
+        break;
+      }
+    }
+  }
+
+  if (valorLiquido == null) {
+    const pago = Number(
+      pedido?.paid_amount != null
+        ? pedido.paid_amount
+        : pedido?.total_amount
+    );
+
+    if (Number.isFinite(pago) && encontrouComissao && frete != null) {
+      valorLiquido = pago - comissao - frete;
+      liquidoEstimado = true;
+    }
+  }
+
+  return {
+    comissao:
+      encontrouComissao
+        ? Number(comissao.toFixed(2))
+        : null,
+
+    frete:
+      frete != null
+        ? Number(frete.toFixed(2))
+        : null,
+
+    valor_liquido:
+      valorLiquido != null
+        ? Number(valorLiquido.toFixed(2))
+        : null,
+
+    valor_liquido_estimado:
+      liquidoEstimado
+  };
+}
+
 // =========================================================
 // ROTAS BÁSICAS
 // =========================================================
@@ -1068,7 +1210,6 @@ app.get(
   }
 );
 
-
 // =========================================================
 // DETALHE DE UM PEDIDO
 // =========================================================
@@ -1117,6 +1258,43 @@ app.get(
         );
       }
 
+      let shipmentCosts = null;
+
+      if (pedido.shipping_id) {
+        try {
+          const account =
+            await getMercadoLivreAccount();
+
+          if (account) {
+            const {
+              response: shipmentResponse
+            } = await mercadoLivreFetch(
+              `/shipments/${pedido.shipping_id}/costs`,
+              account
+            );
+
+            const shipmentData =
+              await shipmentResponse.json();
+
+            if (shipmentResponse.ok) {
+              shipmentCosts = shipmentData;
+            }
+          }
+        } catch (shipmentError) {
+          console.warn(
+            "Não foi possível obter custo de frete:",
+            shipmentError.message
+          );
+        }
+      }
+
+      const financeiro =
+        extrairFinanceiroPedido(
+          pedido,
+          itens || [],
+          shipmentCosts
+        );
+
       const buyerJson =
         pedido.raw_data?.buyer || {
           id: pedido.buyer_id || null,
@@ -1129,7 +1307,8 @@ app.get(
           ...pedido,
           buyer_json: buyerJson
         },
-        itens: itens || []
+        itens: itens || [],
+        financeiro
       });
 
     } catch (erro) {
@@ -1143,6 +1322,111 @@ app.get(
         mensagem:
           erro.message ||
           "Erro interno ao consultar pedido."
+      });
+    }
+  }
+);
+
+
+// =========================================================
+// PEDIDOS SALVOS / FILTROS POR PERÍODO
+// =========================================================
+
+app.get(
+  "/dashboard/orders",
+  async (req, res) => {
+    try {
+      const requested =
+        Number(req.query.limit || 100);
+
+      const limit =
+        Math.min(
+          Math.max(
+            Number.isFinite(requested)
+              ? requested
+              : 100,
+            1
+          ),
+          500
+        );
+
+      const start =
+        normalizeDateStart(req.query.start);
+
+      const end =
+        normalizeDateEnd(req.query.end);
+
+      const status =
+        req.query.status
+          ? String(req.query.status)
+          : null;
+
+      const q =
+        req.query.q
+          ? String(req.query.q).trim()
+          : "";
+
+      let query = supabase
+        .from("marketplace_orders")
+        .select(
+          "id,marketplace_order_id,status,total_amount,paid_amount,date_created,buyer_id,buyer_nickname"
+        )
+        .eq("marketplace", "mercadolivre")
+        .order("date_created", { ascending: false })
+        .limit(limit);
+
+      if (start) {
+        query = query.gte("date_created", start);
+      }
+
+      if (end) {
+        query = query.lte("date_created", end);
+      }
+
+      if (status) {
+        query = query.eq("status", status);
+      }
+
+      if (q) {
+        query = query.or(
+          `marketplace_order_id.ilike.%${q}%,buyer_nickname.ilike.%${q}%`
+        );
+      }
+
+      const {
+        data,
+        error
+      } = await query;
+
+      if (error) {
+        throw new Error(
+          `Erro filtrando pedidos: ${error.message}`
+        );
+      }
+
+      res.json({
+        sucesso: true,
+        quantidade: data?.length || 0,
+        filtros: {
+          start: req.query.start || null,
+          end: req.query.end || null,
+          status,
+          q: q || null
+        },
+        pedidos: data || []
+      });
+
+    } catch (erro) {
+      console.error(
+        "Erro /dashboard/orders:",
+        erro
+      );
+
+      res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message ||
+          "Erro interno ao filtrar pedidos."
       });
     }
   }
@@ -1349,8 +1633,14 @@ app.get(
       let terminou = false;
       const pedidos = [];
 
+      const start =
+        normalizeDateStart(req.query.start);
+
+      const end =
+        normalizeDateEnd(req.query.end);
+
       while (!terminou) {
-        const { data, error } = await supabase
+        let query = supabase
           .from("marketplace_orders")
           .select(
             "id,status,total_amount,paid_amount,date_created,marketplace_order_id"
@@ -1358,6 +1648,17 @@ app.get(
           .eq("marketplace", "mercadolivre")
           .order("date_created", { ascending: false })
           .range(offset, offset + pageSize - 1);
+
+        if (start) {
+          query = query.gte("date_created", start);
+        }
+
+        if (end) {
+          query = query.lte("date_created", end);
+        }
+
+        const { data, error } =
+          await query;
 
         if (error) {
           throw new Error(`Erro dashboard: ${error.message}`);
@@ -1505,6 +1806,10 @@ app.get(
       res.json({
         sucesso: true,
         marketplace: "mercadolivre",
+        periodo: {
+          start: req.query.start || null,
+          end: req.query.end || null
+        },
         pedidos: pedidos.length,
         pedidos_pagos: pedidosPagos,
         pedidos_cancelados: pedidosCancelados,
