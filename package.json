@@ -1,10 +1,11 @@
 {
   "name": "matrix-ai-commerce",
-  "version": "1.0.0",
-  "description": "Backend Matrix AI Commerce - Mercado Livre",
+  "version": "2.0.0",
+  "description": "Matrix AI Commerce - backend modular com Mercado Livre, SAC IA, Stock Matrix, Fiscal, Bling e WhatsApp",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node scripts/check.js"
   },
   "engines": {
     "node": ">=22"
