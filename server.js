@@ -13,7 +13,7 @@ app.use(require("./src/routes/customers"));
 app.use(require("./src/routes/fiscal"));
 app.use(require("./src/routes/bling"));
 app.use(require("./src/routes/whatsapp"));
-aplicativo.use(exigir("./src/routes/analytics"));
+app.use(require("./src/routes/analytics"));
 app.use((req, res) => {
   res.status(404).json({
     sucesso: false,
