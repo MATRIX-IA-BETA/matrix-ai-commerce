@@ -148,15 +148,4 @@ router.post("/whatsapp/send", async (req, res) => {
   }
 });
 
-
-app.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
-    console.log(
-      `Matrix AI Commerce rodando na porta ${PORT}`
-    );
-  }
-);
-
 module.exports = router;
