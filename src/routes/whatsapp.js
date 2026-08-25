@@ -784,6 +784,218 @@ Não invente nada e preserve o sentido da regra recebida.
     : null;
 }
 
+
+async function obterUrlMidiaWhatsApp(mediaId) {
+  if (!mediaId) {
+    throw new Error("ID da mídia do WhatsApp ausente.");
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${mediaId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`
+      }
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data?.url) {
+    console.error("Erro obtendo URL da mídia:", data);
+    throw new Error(
+      data?.error?.message ||
+      "Não foi possível obter a URL do áudio."
+    );
+  }
+
+  return {
+    url: data.url,
+    mimeType: data.mime_type || "audio/ogg"
+  };
+}
+
+async function baixarMidiaWhatsApp(mediaId) {
+  const { url, mimeType } =
+    await obterUrlMidiaWhatsApp(mediaId);
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`
+    }
+  });
+
+  if (!response.ok) {
+    const texto = await response.text();
+    console.error(
+      "Erro baixando mídia do WhatsApp:",
+      texto
+    );
+    throw new Error(
+      "Não foi possível baixar o áudio do WhatsApp."
+    );
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+
+  return {
+    buffer: Buffer.from(arrayBuffer),
+    mimeType
+  };
+}
+
+function extensaoAudioPorMime(mimeType) {
+  const mime = String(mimeType || "").toLowerCase();
+
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("mpeg")) return "mp3";
+  if (mime.includes("mp4")) return "m4a";
+  if (mime.includes("wav")) return "wav";
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("aac")) return "aac";
+  if (mime.includes("amr")) return "amr";
+
+  return "ogg";
+}
+
+async function transcreverAudioOpenAI({
+  buffer,
+  mimeType
+}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY não configurada.");
+  }
+
+  const ext = extensaoAudioPorMime(mimeType);
+
+  const form = new FormData();
+  const blob = new Blob(
+    [buffer],
+    { type: mimeType || "audio/ogg" }
+  );
+
+  form.append(
+    "file",
+    blob,
+    `audio.${ext}`
+  );
+
+  // whisper-1 é estável para transcrição e barato para áudios curtos.
+  form.append("model", "whisper-1");
+  form.append("language", "pt");
+
+  const response = await fetch(
+    "https://api.openai.com/v1/audio/transcriptions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      },
+      body: form
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error(
+      "Erro transcrevendo áudio:",
+      data
+    );
+
+    throw new Error(
+      data?.error?.message ||
+      "OpenAI recusou a transcrição do áudio."
+    );
+  }
+
+  const texto =
+    data?.text ||
+    data?.transcript ||
+    "";
+
+  if (!String(texto).trim()) {
+    throw new Error(
+      "A transcrição do áudio veio vazia."
+    );
+  }
+
+  return String(texto).trim();
+}
+
+async function extrairTextoMensagemWhatsApp(message) {
+  if (!message) {
+    return {
+      text: null,
+      originalType: null,
+      metadata: {}
+    };
+  }
+
+  if (message.type === "text") {
+    return {
+      text: message?.text?.body || null,
+      originalType: "text",
+      metadata: {}
+    };
+  }
+
+  if (message.type === "button") {
+    return {
+      text: message?.button?.text || null,
+      originalType: "button",
+      metadata: {}
+    };
+  }
+
+  if (message.type === "interactive") {
+    return {
+      text:
+        message?.interactive?.button_reply?.title ||
+        message?.interactive?.list_reply?.title ||
+        null,
+      originalType: "interactive",
+      metadata: {}
+    };
+  }
+
+  if (message.type === "audio") {
+    const mediaId = message?.audio?.id;
+
+    if (!mediaId) {
+      throw new Error(
+        "Mensagem de áudio sem media ID."
+      );
+    }
+
+    const { buffer, mimeType } =
+      await baixarMidiaWhatsApp(mediaId);
+
+    const transcricao =
+      await transcreverAudioOpenAI({
+        buffer,
+        mimeType
+      });
+
+    return {
+      text: transcricao,
+      originalType: "audio",
+      metadata: {
+        audio_media_id: mediaId,
+        audio_mime_type: mimeType,
+        audio_voice:
+          Boolean(message?.audio?.voice)
+      }
+    };
+  }
+
+  return {
+    text: null,
+    originalType: message.type || null,
+    metadata: {}
+  };
+}
+
 // Validação do webhook pela Meta
 router.get(
   "/webhooks/whatsapp",
@@ -857,14 +1069,33 @@ router.post(
                 ? value.contacts[0]
                 : null;
 
+            let parsedMessage;
+
+            try {
+              parsedMessage =
+                await extrairTextoMensagemWhatsApp(
+                  message
+                );
+            } catch (mediaError) {
+              console.error(
+                "Erro processando mídia do WhatsApp:",
+                mediaError
+              );
+
+              if (message?.from) {
+                try {
+                  await enviarMensagemWhatsApp(
+                    message.from,
+                    "Não consegui processar esse áudio agora. Pode enviar novamente ou escrever a mensagem em texto?"
+                  );
+                } catch {}
+              }
+
+              continue;
+            }
+
             const messageText =
-              message?.text?.body ||
-              message?.button?.text ||
-              message?.interactive
-                ?.button_reply?.title ||
-              message?.interactive
-                ?.list_reply?.title ||
-              null;
+              parsedMessage?.text || null;
 
             if (
               !message.from ||
@@ -872,7 +1103,8 @@ router.post(
               ![
                 "text",
                 "button",
-                "interactive"
+                "interactive",
+                "audio"
               ].includes(message.type)
             ) {
               continue;
@@ -909,6 +1141,10 @@ router.post(
               externalMessageId: message.id,
               metadata: {
                 type: message.type,
+                original_type:
+                  parsedMessage?.originalType ||
+                  message.type,
+                ...(parsedMessage?.metadata || {}),
                 contact_name:
                   contact?.profile?.name ||
                   null,
@@ -924,7 +1160,10 @@ router.post(
               {
                 from: message.from,
                 conversation_id: conversa.id,
-                text: messageText
+                text: messageText,
+                original_type:
+                  parsedMessage?.originalType ||
+                  message.type
               }
             );
 
