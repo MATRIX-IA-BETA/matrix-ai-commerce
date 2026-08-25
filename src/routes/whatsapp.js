@@ -1,5 +1,12 @@
 const router = require("express").Router();
 const { env } = require("../config/env");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+
+const execFileAsync = promisify(execFile);
 
 const WHATSAPP_VERIFY_TOKEN = env.WHATSAPP_VERIFY_TOKEN;
 const WHATSAPP_ACCESS_TOKEN = env.WHATSAPP_ACCESS_TOKEN;
@@ -17,6 +24,14 @@ const OPENAI_MODEL =
   env.OPENAI_MODEL ||
   process.env.OPENAI_MODEL ||
   "gpt-5.6";
+
+
+const MAX_VIDEO_SECONDS =
+  Number(
+    env.MAX_VIDEO_SECONDS ||
+    process.env.MAX_VIDEO_SECONDS ||
+    60
+  );
 
 const SUPABASE_URL =
   env.SUPABASE_URL ||
@@ -785,6 +800,333 @@ Não invente nada e preserve o sentido da regra recebida.
 }
 
 
+
+function bufferParaDataUrl(buffer, mimeType) {
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+function extrairOutputText(data) {
+  return (
+    data?.output_text ||
+    (Array.isArray(data?.output)
+      ? data.output
+          .flatMap(item => item?.content || [])
+          .map(content => content?.text || "")
+          .filter(Boolean)
+          .join("\n")
+      : "")
+  ).trim();
+}
+
+async function analisarImagensOpenAI({
+  imagens,
+  prompt
+}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY não configurada.");
+  }
+
+  const conteudo = [
+    {
+      type: "input_text",
+      text:
+        prompt ||
+        "Analise cuidadosamente a imagem e descreva somente o que é realmente visível. Se não for possível confirmar algo, diga que não é possível confirmar pela imagem."
+    }
+  ];
+
+  for (const imagem of imagens || []) {
+    conteudo.push({
+      type: "input_image",
+      image_url: bufferParaDataUrl(
+        imagem.buffer,
+        imagem.mimeType || "image/jpeg"
+      ),
+      detail: "high"
+    });
+  }
+
+  const response = await fetch(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        input: [
+          {
+            role: "user",
+            content: conteudo
+          }
+        ]
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro analisando imagem:", data);
+    throw new Error(
+      data?.error?.message ||
+      "OpenAI recusou a análise da imagem."
+    );
+  }
+
+  const texto = extrairOutputText(data);
+
+  if (!texto) {
+    throw new Error(
+      "A análise visual retornou vazia."
+    );
+  }
+
+  return texto;
+}
+
+async function duracaoVideoSegundos(videoPath) {
+  try {
+    const { stdout } = await execFileAsync(
+      "ffprobe",
+      [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        videoPath
+      ],
+      {
+        timeout: 30000,
+        maxBuffer: 1024 * 1024
+      }
+    );
+
+    const n = Number(String(stdout).trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch (erro) {
+    console.warn(
+      "Não foi possível obter duração do vídeo:",
+      erro.message
+    );
+    return null;
+  }
+}
+
+async function extrairFramesVideo({
+  videoPath,
+  tempDir,
+  maxFrames = 8
+}) {
+  const duracao =
+    await duracaoVideoSegundos(videoPath);
+
+  const fps = duracao
+    ? Math.min(
+        1,
+        Math.max(
+          0.08,
+          maxFrames / duracao
+        )
+      )
+    : 0.25;
+
+  const pattern =
+    path.join(tempDir, "frame-%02d.jpg");
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-i", videoPath,
+      "-vf",
+      `fps=${fps},scale='min(1280,iw)':-2`,
+      "-frames:v",
+      String(maxFrames),
+      "-q:v", "3",
+      pattern
+    ],
+    {
+      timeout: 90000,
+      maxBuffer: 8 * 1024 * 1024
+    }
+  );
+
+  const nomes = fs
+    .readdirSync(tempDir)
+    .filter(nome =>
+      /^frame-\d+\.jpg$/i.test(nome)
+    )
+    .sort();
+
+  return nomes.map(nome => ({
+    buffer: fs.readFileSync(
+      path.join(tempDir, nome)
+    ),
+    mimeType: "image/jpeg"
+  }));
+}
+
+async function extrairAudioVideo({
+  videoPath,
+  tempDir
+}) {
+  const audioPath =
+    path.join(tempDir, "video-audio.mp3");
+
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i", videoPath,
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        "-b:a", "64k",
+        audioPath
+      ],
+      {
+        timeout: 90000,
+        maxBuffer: 8 * 1024 * 1024
+      }
+    );
+
+    if (
+      fs.existsSync(audioPath) &&
+      fs.statSync(audioPath).size > 0
+    ) {
+      return {
+        buffer:
+          fs.readFileSync(audioPath),
+        mimeType: "audio/mpeg"
+      };
+    }
+  } catch (erro) {
+    console.warn(
+      "Vídeo sem áudio utilizável ou falha extraindo áudio:",
+      erro.message
+    );
+  }
+
+  return null;
+}
+
+async function analisarVideoWhatsApp({
+  buffer,
+  mimeType,
+  caption
+}) {
+  const tempDir =
+    fs.mkdtempSync(
+      path.join(
+        os.tmpdir(),
+        "matrix-video-"
+      )
+    );
+
+  const ext =
+    String(mimeType || "")
+      .toLowerCase()
+      .includes("3gpp")
+      ? "3gp"
+      : "mp4";
+
+  const videoPath =
+    path.join(tempDir, `video.${ext}`);
+
+  try {
+    fs.writeFileSync(
+      videoPath,
+      buffer
+    );
+
+    const duracao =
+      await duracaoVideoSegundos(
+        videoPath
+      );
+
+    if (
+      duracao &&
+      duracao > MAX_VIDEO_SECONDS
+    ) {
+      const erro = new Error(
+        `VIDEO_TOO_LONG:${Math.ceil(duracao)}`
+      );
+      erro.code = "VIDEO_TOO_LONG";
+      erro.duration = duracao;
+      throw erro;
+    }
+
+    const [
+      frames,
+      audio
+    ] = await Promise.all([
+      extrairFramesVideo({
+        videoPath,
+        tempDir,
+        maxFrames: 8
+      }),
+      extrairAudioVideo({
+        videoPath,
+        tempDir
+      })
+    ]);
+
+    let transcricao = "";
+
+    if (audio?.buffer) {
+      try {
+        transcricao =
+          await transcreverAudioOpenAI({
+            buffer: audio.buffer,
+            mimeType:
+              audio.mimeType
+          });
+      } catch (erro) {
+        console.warn(
+          "Falha transcrevendo áudio do vídeo:",
+          erro.message
+        );
+      }
+    }
+
+    let analiseVisual = "";
+
+    if (frames.length) {
+      analiseVisual =
+        await analisarImagensOpenAI({
+          imagens: frames,
+          prompt: `
+Você está analisando quadros representativos de um vídeo enviado ao SAC da Shop Matrix.
+Analise o que acontece visualmente ao longo dos quadros.
+Priorize informações técnicas úteis: computador, cabos, conectores, fonte, chave seletora de voltagem, LEDs, ventoinhas, tela/BIOS/Windows, mensagens de erro, ligação elétrica e ações feitas pelo cliente.
+Não invente continuidade entre quadros. Se algo não puder ser confirmado, diga isso.
+Legenda enviada pelo cliente: ${caption || "(sem legenda)"}
+Transcrição do áudio do vídeo: ${transcricao || "(sem áudio/transcrição)"}
+`
+        });
+    }
+
+    return {
+      transcricao,
+      analiseVisual,
+      frameCount: frames.length
+    };
+  } finally {
+    try {
+      fs.rmSync(
+        tempDir,
+        {
+          recursive: true,
+          force: true
+        }
+      );
+    } catch {}
+  }
+}
+
 async function obterUrlMidiaWhatsApp(mediaId) {
   if (!mediaId) {
     throw new Error("ID da mídia do WhatsApp ausente.");
@@ -959,6 +1301,127 @@ async function extrairTextoMensagemWhatsApp(message) {
     };
   }
 
+
+  if (message.type === "image") {
+    const mediaId = message?.image?.id;
+    const caption =
+      message?.image?.caption || "";
+
+    if (!mediaId) {
+      throw new Error(
+        "Mensagem de imagem sem media ID."
+      );
+    }
+
+    const {
+      buffer,
+      mimeType
+    } = await baixarMidiaWhatsApp(
+      mediaId
+    );
+
+    const analise =
+      await analisarImagensOpenAI({
+        imagens: [
+          {
+            buffer,
+            mimeType:
+              mimeType ||
+              "image/jpeg"
+          }
+        ],
+        prompt: `
+Analise esta imagem enviada ao SAC da Shop Matrix.
+A imagem pode mostrar chave seletora 115/230 V, ligação elétrica, estabilizador/filtro de linha, placa-mãe, memória, cabos, conectores, etiqueta, BIOS, Windows ou mensagem de erro.
+Leia somente o que for realmente visível. Quando houver chave seletora de voltagem, identifique a posição apenas se estiver claramente visível; caso contrário peça foto mais nítida.
+Legenda/pergunta do cliente: ${caption || "(sem legenda)"}
+`
+      });
+
+    return {
+      text:
+        [
+          caption
+            ? `Mensagem/legenda do cliente: ${caption}`
+            : null,
+          `Análise visual da imagem: ${analise}`
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      originalType: "image",
+      metadata: {
+        image_media_id: mediaId,
+        image_mime_type:
+          mimeType || null,
+        image_caption:
+          caption || null,
+        image_analysis:
+          analise
+      }
+    };
+  }
+
+  if (message.type === "video") {
+    const mediaId =
+      message?.video?.id;
+    const caption =
+      message?.video?.caption ||
+      "";
+
+    if (!mediaId) {
+      throw new Error(
+        "Mensagem de vídeo sem media ID."
+      );
+    }
+
+    const {
+      buffer,
+      mimeType
+    } = await baixarMidiaWhatsApp(
+      mediaId
+    );
+
+    const resultado =
+      await analisarVideoWhatsApp({
+        buffer,
+        mimeType,
+        caption
+      });
+
+    return {
+      text:
+        [
+          caption
+            ? `Mensagem/legenda do cliente: ${caption}`
+            : null,
+          resultado.transcricao
+            ? `Transcrição do áudio do vídeo: ${resultado.transcricao}`
+            : null,
+          resultado.analiseVisual
+            ? `Análise visual do vídeo: ${resultado.analiseVisual}`
+            : null
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      originalType: "video",
+      metadata: {
+        video_media_id: mediaId,
+        video_mime_type:
+          mimeType || null,
+        video_caption:
+          caption || null,
+        video_transcription:
+          resultado.transcricao ||
+          null,
+        video_visual_analysis:
+          resultado.analiseVisual ||
+          null,
+        video_frames_analyzed:
+          resultado.frameCount || 0
+      }
+    };
+  }
+
   if (message.type === "audio") {
     const mediaId = message?.audio?.id;
 
@@ -1084,9 +1547,20 @@ router.post(
 
               if (message?.from) {
                 try {
+                  const mensagemErro =
+                    mediaError?.code === "VIDEO_TOO_LONG"
+                      ? `Só consigo ler vídeos de até ${MAX_VIDEO_SECONDS} segundos. Por favor, envie um vídeo menor.`
+                      : message?.type === "audio"
+                        ? "Não consegui processar esse áudio agora. Pode enviar novamente ou escrever a mensagem em texto?"
+                        : message?.type === "image"
+                          ? "Não consegui analisar essa imagem agora. Pode enviar novamente, de preferência mais nítida?"
+                          : message?.type === "video"
+                            ? "Não consegui processar esse vídeo agora. Pode enviar novamente ou mandar um vídeo menor?"
+                            : "Não consegui processar essa mídia agora. Pode enviar novamente?";
+
                   await enviarMensagemWhatsApp(
                     message.from,
-                    "Não consegui processar esse áudio agora. Pode enviar novamente ou escrever a mensagem em texto?"
+                    mensagemErro
                   );
                 } catch {}
               }
@@ -1104,7 +1578,9 @@ router.post(
                 "text",
                 "button",
                 "interactive",
-                "audio"
+                "audio",
+                "image",
+                "video"
               ].includes(message.type)
             ) {
               continue;
