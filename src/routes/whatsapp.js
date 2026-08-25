@@ -57,14 +57,150 @@ function tipoDeUsuario(from) {
   return "customer";
 }
 
+
+function memoryOwnerKey(from) {
+  const numero = limparNumero(from);
+  const role = tipoDeUsuario(numero);
+
+  if (role === "admin" || role === "family") {
+    return `whatsapp:${numero}`;
+  }
+
+  return null;
+}
+
+function pedidoNaturalDeMemoria(texto) {
+  const t = String(texto || "").trim();
+
+  const patterns = [
+    /^\s*(mia[,\s]*)?(lembra|lembre|guarda|guarde|grava|grave|anota|anote|salva|salve)\b/i,
+    /^\s*(mia[,\s]*)?pra voce lembrar\b/i,
+    /^\s*(mia[,\s]*)?quero que voce lembre\b/i
+  ];
+
+  return patterns.some(p => p.test(t));
+}
+
+function extrairMemoriaNatural(texto) {
+  return String(texto || "")
+    .replace(/^\s*mia[,\s]*/i, "")
+    .replace(/^\s*(lembra|lembre|guarda|guarde|grava|grave|anota|anote|salva|salve)\s*(a[ií]|que|isso|:|-)?\s*/i, "")
+    .replace(/^\s*(pra voce lembrar|quero que voce lembre)\s*(que|:|-)?\s*/i, "")
+    .trim();
+}
+
+async function salvarMemoriaPessoal({
+  ownerKey,
+  ownerRole,
+  content,
+  source = "whatsapp_explicit"
+}) {
+  if (!ownerKey || !content) return null;
+
+  let titulo = "Memória pessoal";
+  let conteudo = content;
+
+  if (OPENAI_API_KEY) {
+    try {
+      const response = await fetch(
+        "https://api.openai.com/v1/responses",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: OPENAI_MODEL,
+            instructions: `
+Transforme a informação em uma memória curta e fiel.
+Responda SOMENTE JSON válido:
+{"title":"título curto","content":"fato em uma frase"}
+Não invente, não generalize e não inclua informação que não esteja no texto.
+`,
+            input: content
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        const raw =
+          data.output_text ||
+          data?.output?.[0]?.content?.[0]?.text ||
+          "";
+
+        try {
+          const obj = JSON.parse(
+            raw.replace(/^```json\s*/i, "")
+              .replace(/```$/i, "")
+              .trim()
+          );
+
+          if (obj.title && obj.content) {
+            titulo = String(obj.title);
+            conteudo = String(obj.content);
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  const gravada = await supabaseRest(
+    "matrix_personal_memory",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({
+        owner_key: ownerKey,
+        owner_role: ownerRole,
+        title: titulo,
+        content: conteudo,
+        memory_type: "explicit",
+        visibility: "owner",
+        active: true,
+        source
+      })
+    }
+  );
+
+  return Array.isArray(gravada) ? gravada[0] : null;
+}
+
+async function buscarMemoriaPessoal(ownerKey) {
+  if (!ownerKey) return [];
+
+  const data = await supabaseRest(
+    `matrix_personal_memory?owner_key=eq.${encodeURIComponent(ownerKey)}&active=eq.true&select=title,content,memory_type,created_at&order=created_at.desc&limit=80`
+  );
+
+  return Array.isArray(data) ? data : [];
+}
+
+async function buscarMemoriaCompartilhadaFamilia() {
+  const data = await supabaseRest(
+    "matrix_shared_memory?active=eq.true&select=title,content,category,created_at&order=created_at.desc&limit=80"
+  );
+
+  return Array.isArray(data) ? data : [];
+}
+
 const MIA_PROMPT = `
-Você é Mia, uma assistente de IA geral acessada pelo WhatsApp privado da família Shop Matrix.
-Converse naturalmente em português do Brasil e responda perguntas de qualquer assunto dentro de suas capacidades.
-Use o histórico desta conversa para manter contexto.
-Não transforme conversa casual, perguntas gerais ou opiniões em regras da empresa.
-Somente administradores podem ensinar conhecimento oficial ao SAC.
-Quando o usuário for administrador e der uma instrução explícita de treinamento iniciada por APRENDA:, TREINAR: ou TREINE:, o sistema tratará isso separadamente.
-Não diga que é humana. Se perguntarem, diga que é uma assistente de IA quase humana.
+Você é Mia, uma assistente de IA geral acessada pelo WhatsApp da família Shop Matrix.
+
+COMPORTAMENTO:
+- Converse naturalmente em português do Brasil.
+- Pode responder sobre qualquer assunto dentro de suas capacidades.
+- Use o histórico da conversa, a memória pessoal do usuário e a memória compartilhada quando forem relevantes.
+- Não invente lembranças. Se a memória não trouxer um fato, diga que não sabe ou peça para o usuário ensinar.
+- Não transforme conversa casual em memória automaticamente.
+- Quando o usuário pedir explicitamente para lembrar/gravar/anotar/salvar algo, o sistema trata isso como memória pessoal.
+- Somente administradores podem ensinar regras oficiais do SAC.
+- Não misture memória de uma pessoa com outra.
+- Não diga que é humana. Se perguntarem, diga que é uma assistente de IA.
 `;
 
 const BASE_PROMPT = `
@@ -269,7 +405,9 @@ async function buscarExperienciasResolvidas() {
 function montarContexto({
   historico,
   conhecimento,
-  experiencias
+  experiencias,
+  memoriaPessoal = [],
+  memoriaCompartilhada = []
 }) {
   const regras = conhecimento.length
     ? conhecimento
@@ -298,12 +436,30 @@ function montarContexto({
         .join("\n")
     : "Sem histórico anterior.";
 
+  const memoriaUsuario = memoriaPessoal.length
+    ? memoriaPessoal
+        .map(item => `- ${item.title}: ${item.content}`)
+        .join("\n")
+    : "- Nenhuma memória pessoal disponível.";
+
+  const memoriaFamilia = memoriaCompartilhada.length
+    ? memoriaCompartilhada
+        .map(item => `- ${item.title}: ${item.content}`)
+        .join("\n")
+    : "- Nenhuma memória compartilhada disponível.";
+
   return `
 CONHECIMENTO OFICIAL DA SHOP MATRIX:
 ${regras}
 
 EXPERIÊNCIAS DE ATENDIMENTOS JÁ RESOLVIDOS:
 ${casos}
+
+MEMÓRIA PESSOAL DO USUÁRIO:
+${memoriaUsuario}
+
+MEMÓRIA COMPARTILHADA:
+${memoriaFamilia}
 
 HISTÓRICO DESTA CONVERSA:
 ${conversa}
@@ -316,6 +472,8 @@ async function gerarRespostaIA({
   historico,
   conhecimento,
   experiencias,
+  memoriaPessoal = [],
+  memoriaCompartilhada = [],
   userType = "customer"
 }) {
   if (!OPENAI_API_KEY) {
@@ -325,7 +483,9 @@ async function gerarRespostaIA({
   const contexto = montarContexto({
     historico,
     conhecimento,
-    experiencias
+    experiencias,
+    memoriaPessoal,
+    memoriaCompartilhada
   });
 
   const input = `
@@ -820,6 +980,46 @@ router.post(
               continue;
             }
 
+            // MEMÓRIA PESSOAL EXPLÍCITA - ADMIN E FAMÍLIA
+            if (
+              (userType === "admin" || userType === "family") &&
+              pedidoNaturalDeMemoria(messageText)
+            ) {
+              const ownerKey = memoryOwnerKey(message.from);
+              const memoria = extrairMemoriaNatural(messageText);
+
+              if (memoria) {
+                const gravada = await salvarMemoriaPessoal({
+                  ownerKey,
+                  ownerRole: userType,
+                  content: memoria
+                });
+
+                const confirmacao = gravada
+                  ? `Beleza. Gravei na sua memória: ${gravada.content}`
+                  : "Beleza. Gravei isso na sua memória.";
+
+                const envio = await enviarMensagemWhatsApp(
+                  message.from,
+                  confirmacao
+                );
+
+                await salvarMensagem({
+                  conversationId: conversa.id,
+                  direction: "outbound",
+                  role: "assistant",
+                  content: confirmacao,
+                  externalMessageId:
+                    envio?.messages?.[0]?.id || null,
+                  metadata: {
+                    personal_memory: true
+                  }
+                });
+
+                continue;
+              }
+            }
+
             const historico =
               await buscarHistorico(
                 conversa.id
@@ -854,6 +1054,18 @@ router.post(
                 ? await buscarExperienciasResolvidas()
                 : [];
 
+            const ownerKey = memoryOwnerKey(message.from);
+
+            const memoriaPessoal =
+              (userType === "admin" || userType === "family")
+                ? await buscarMemoriaPessoal(ownerKey)
+                : [];
+
+            const memoriaCompartilhada =
+              (userType === "admin" || userType === "family")
+                ? await buscarMemoriaCompartilhadaFamilia()
+                : [];
+
             const respostaIA =
               await gerarRespostaIA({
                 mensagem: messageText,
@@ -863,6 +1075,8 @@ router.post(
                 historico,
                 conhecimento,
                 experiencias,
+                memoriaPessoal,
+                memoriaCompartilhada,
                 userType
               });
 
