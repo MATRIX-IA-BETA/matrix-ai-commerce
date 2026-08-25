@@ -17,7 +17,7 @@ app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
 app.use(require("./src/routes/fiscal"));
-app.use(require("./src/routes/billing"));
+app.use(require("./src/routes/bling"));
 app.use(require("./src/routes/whatsapp"));
 
 // =========================================================
