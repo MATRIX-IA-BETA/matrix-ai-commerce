@@ -1,6 +1,8 @@
 {
   "$schema": "https://schema.railpack.com",
   "packages": {
-    "apt": ["ffmpeg"]
+    "apt": [
+      "ffmpeg"
+    ]
   }
 }
