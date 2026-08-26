@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>Matrix AI | Central SAC</title>
+  <title>Matrix AI — Central SAC</title>
 
   <style>
     * {
@@ -15,16 +15,22 @@
 
     :root {
       --bg: #07101f;
+      --top: #081426;
       --panel: #0d1728;
       --panel2: #111d31;
       --border: #22304a;
+
       --text: #eef4ff;
       --muted: #8fa1bd;
+
       --green: #27d17f;
       --yellow: #f7c948;
       --red: #ff5c6c;
       --blue: #4da3ff;
       --purple: #9c7cff;
+
+      --inbound: #18243a;
+      --outbound: #154737;
     }
 
     body {
@@ -37,7 +43,7 @@
 
     button,
     input,
-    select {
+    textarea {
       font: inherit;
     }
 
@@ -50,66 +56,80 @@
     ===================================================== */
 
     .topbar {
-      height: 68px;
-      background: #091426;
+      height: 76px;
+      background: var(--top);
       border-bottom: 1px solid var(--border);
 
       display: flex;
       align-items: center;
       justify-content: space-between;
 
-      padding: 0 24px;
+      padding: 0 28px;
     }
 
     .brand {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 15px;
     }
 
     .logo {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
+      width: 48px;
+      height: 48px;
+
+      border-radius: 13px;
 
       display: flex;
       align-items: center;
       justify-content: center;
 
-      background: linear-gradient(135deg, #4da3ff, #9c7cff);
+      background: linear-gradient(
+        135deg,
+        #4da3ff,
+        #9877ff
+      );
+
+      font-size: 22px;
       font-weight: 900;
-      font-size: 20px;
     }
 
     .brand h1 {
-      font-size: 18px;
-      margin-bottom: 3px;
+      font-size: 20px;
+      line-height: 1.1;
     }
 
     .brand small {
-      color: var(--muted);
+      display: block;
+      margin-top: 5px;
+
+      color: #79a6dd;
+      font-size: 14px;
     }
 
     .top-status {
       display: flex;
       align-items: center;
-      gap: 18px;
-      color: var(--muted);
+      gap: 22px;
+
+      color: #82a6cf;
       font-size: 13px;
     }
 
     .online {
       color: var(--green);
-      font-weight: 700;
+      font-weight: 800;
     }
 
     .online-dot {
+      width: 9px;
+      height: 9px;
+
       display: inline-block;
-      width: 8px;
-      height: 8px;
-      background: var(--green);
       border-radius: 50%;
-      margin-right: 6px;
+
+      background: var(--green);
+
+      margin-right: 7px;
     }
 
     /* =====================================================
@@ -117,90 +137,103 @@
     ===================================================== */
 
     .app {
-      height: calc(100vh - 68px);
+      height: calc(100vh - 76px);
 
       display: grid;
-      grid-template-columns: 390px 1fr;
+      grid-template-columns: 445px 1fr;
     }
 
     /* =====================================================
-       COLUNA ESQUERDA
+       ESQUERDA
     ===================================================== */
 
     .sidebar {
+      background: #081426;
       border-right: 1px solid var(--border);
-      background: #091426;
+
+      min-width: 0;
 
       display: flex;
       flex-direction: column;
-
-      min-width: 0;
     }
 
     .stats {
-      padding: 15px;
+      padding: 18px 16px;
 
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 10px;
 
       border-bottom: 1px solid var(--border);
     }
 
     .stat {
-      background: var(--panel);
+      min-height: 70px;
+
+      padding: 12px;
+
+      border-radius: 11px;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
+
+      background: #0b1729;
     }
 
     .stat strong {
       display: block;
-      font-size: 20px;
+
+      margin-bottom: 6px;
+
+      font-size: 21px;
     }
 
     .stat span {
-      color: var(--muted);
-      font-size: 11px;
+      color: #8babd1;
+      font-size: 12px;
     }
 
     .toolbar {
-      padding: 12px;
+      padding: 14px;
+
       border-bottom: 1px solid var(--border);
     }
 
     .search {
       width: 100%;
-      padding: 11px 13px;
 
-      border-radius: 9px;
-      border: 1px solid var(--border);
+      padding: 12px 14px;
 
-      background: var(--panel);
+      background: #0b1729;
       color: white;
 
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
       outline: none;
-      margin-bottom: 9px;
+
+      margin-bottom: 10px;
     }
 
     .filters {
       display: flex;
-      gap: 6px;
+      align-items: center;
+      gap: 8px;
     }
 
     .filter {
       border: 1px solid var(--border);
-      background: var(--panel);
-      color: var(--muted);
 
-      padding: 7px 10px;
+      background: #0b1729;
+      color: #9ab3d2;
+
+      padding: 9px 12px;
       border-radius: 8px;
     }
 
     .filter.active {
-      background: #17345d;
+      background: #173f70;
       color: white;
-      border-color: #2d67a8;
+
+      border-color: #397fcb;
     }
 
     .refresh-btn {
@@ -208,122 +241,134 @@
     }
 
     .conversation-list {
-      overflow-y: auto;
       flex: 1;
+      overflow-y: auto;
     }
 
     .conversation {
-      padding: 14px;
+      padding: 15px 16px;
 
-      border-bottom: 1px solid #17243a;
+      border-bottom: 1px solid #17263d;
 
       cursor: pointer;
+
       transition: 0.15s;
     }
 
     .conversation:hover {
-      background: #101d31;
+      background: #101e33;
     }
 
     .conversation.active {
-      background: #13233b;
+      padding-left: 12px;
+
+      background: #172a45;
+
       border-left: 4px solid var(--blue);
-      padding-left: 10px;
     }
 
     .conversation-top {
       display: flex;
-      align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      align-items: center;
 
-      margin-bottom: 6px;
+      gap: 8px;
+
+      margin-bottom: 7px;
     }
 
     .contact-name {
-      font-weight: 700;
+      font-weight: 800;
       font-size: 14px;
 
-      white-space: nowrap;
       overflow: hidden;
+      white-space: nowrap;
       text-overflow: ellipsis;
     }
 
     .time {
+      color: #8da8c9;
       font-size: 11px;
-      color: var(--muted);
+
       flex-shrink: 0;
     }
 
     .channel {
       display: inline-block;
-      font-size: 10px;
-      padding: 3px 7px;
+
+      margin-bottom: 7px;
+
+      padding: 3px 8px;
+
       border-radius: 20px;
 
-      background: #183355;
-      color: #8dc6ff;
+      background: #163352;
+      color: #8ac8ff;
 
-      margin-bottom: 6px;
+      font-size: 10px;
     }
 
     .channel.whatsapp {
-      background: #11372b;
-      color: #5ee6a7;
+      background: #0e3b29;
+      color: #50e298;
     }
 
     .last-message {
-      color: var(--muted);
+      color: #8fabcc;
+
       font-size: 12px;
-      line-height: 1.4;
+      line-height: 1.45;
 
       overflow: hidden;
+
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
     }
 
     .conversation-footer {
-      margin-top: 8px;
-
       display: flex;
       align-items: center;
       gap: 6px;
+
+      margin-top: 9px;
     }
 
     .badge {
-      font-size: 10px;
       padding: 3px 7px;
+
       border-radius: 20px;
+
+      font-size: 10px;
     }
 
     .badge-ai {
-      background: #2c2254;
-      color: #c3b2ff;
+      background: #382568;
+      color: #cbb9ff;
     }
 
     .badge-human {
-      background: #173552;
-      color: #8ac7ff;
+      background: #163a5b;
+      color: #93d0ff;
     }
 
     .badge-review {
-      background: #4b3712;
-      color: #ffd66e;
+      background: #503c12;
+      color: #ffd977;
     }
 
     .badge-danger {
-      background: #481a24;
-      color: #ff8995;
+      background: #501d28;
+      color: #ff8998;
     }
 
-    .badge-open {
-      background: #123828;
-      color: #6ce5a6;
+    .badge-unread {
+      background: #145434;
+      color: #6bf0aa;
     }
 
     /* =====================================================
-       ÁREA PRINCIPAL
+       ÁREA CENTRAL
     ===================================================== */
 
     .main {
@@ -332,7 +377,7 @@
       display: flex;
       flex-direction: column;
 
-      background: #07101f;
+      background: var(--bg);
     }
 
     .empty {
@@ -342,23 +387,36 @@
       align-items: center;
       justify-content: center;
 
-      color: var(--muted);
       text-align: center;
+
+      color: var(--muted);
     }
 
     .empty-inner {
-      max-width: 420px;
+      max-width: 500px;
     }
 
     .empty-icon {
-      font-size: 55px;
+      font-size: 56px;
       margin-bottom: 18px;
     }
 
     .empty h2 {
       color: white;
+
       margin-bottom: 8px;
+
+      font-size: 25px;
     }
+
+    .empty p {
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    /* =====================================================
+       CHAT
+    ===================================================== */
 
     .chat {
       height: 100%;
@@ -368,45 +426,55 @@
     }
 
     .chat-header {
-      min-height: 78px;
+      min-height: 88px;
 
-      padding: 14px 20px;
+      padding: 16px 22px;
 
+      background: #081426;
       border-bottom: 1px solid var(--border);
-      background: #091426;
 
       display: flex;
       align-items: center;
       justify-content: space-between;
+
       gap: 20px;
     }
 
     .chat-title h2 {
-      font-size: 17px;
-      margin-bottom: 5px;
+      font-size: 19px;
+
+      margin-bottom: 6px;
     }
 
     .chat-title p {
-      color: var(--muted);
+      color: #74a0d1;
       font-size: 12px;
+    }
+
+    .chat-state {
+      margin-top: 7px;
+
+      display: flex;
+      gap: 7px;
     }
 
     .header-actions {
       display: flex;
-      gap: 8px;
+      gap: 9px;
     }
 
     .action-btn {
-      border: 1px solid var(--border);
-      background: var(--panel);
-      color: white;
+      padding: 10px 14px;
 
-      padding: 9px 12px;
-      border-radius: 8px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+
+      background: #0c1829;
+      color: white;
     }
 
     .action-btn:hover {
-      background: var(--panel2);
+      background: #13243c;
     }
 
     /* =====================================================
@@ -415,16 +483,19 @@
 
     .messages {
       flex: 1;
+
       overflow-y: auto;
 
-      padding: 22px;
+      padding: 25px 30px;
 
       display: flex;
       flex-direction: column;
-      gap: 13px;
+      gap: 12px;
     }
 
     .message-row {
+      width: 100%;
+
       display: flex;
     }
 
@@ -438,119 +509,75 @@
 
     .bubble {
       max-width: 72%;
-      padding: 12px 14px;
 
-      border-radius: 13px;
-      line-height: 1.45;
+      padding: 13px 15px;
+
+      border-radius: 14px;
 
       font-size: 14px;
+      line-height: 1.5;
 
       white-space: pre-wrap;
       word-break: break-word;
     }
 
-    .inbound .bubble {
-      background: #132036;
-      border: 1px solid #1f3150;
+    .message-row.inbound .bubble {
+      background: var(--inbound);
+
+      border: 1px solid #273957;
+
+      border-bottom-left-radius: 4px;
     }
 
-    .outbound .bubble {
-      background: #153b31;
-      border: 1px solid #245846;
+    .message-row.outbound .bubble {
+      background: var(--outbound);
+
+      border: 1px solid #236249;
+
+      border-bottom-right-radius: 4px;
+    }
+
+    .message-author {
+      display: block;
+
+      margin-bottom: 5px;
+
+      font-size: 10px;
+      font-weight: 800;
+
+      text-transform: uppercase;
+
+      color: #92acd0;
+    }
+
+    .outbound .message-author {
+      color: #6ce0a8;
     }
 
     .message-meta {
       display: block;
 
-      margin-top: 7px;
+      margin-top: 8px;
+
+      color: #8298b7;
 
       font-size: 10px;
-      color: #8091aa;
 
       text-align: right;
     }
 
-    /* =====================================================
-       PAINEL INFERIOR
-    ===================================================== */
+    .media-label {
+      display: inline-block;
 
-    .composer {
-      padding: 14px 18px;
+      margin-bottom: 7px;
 
-      border-top: 1px solid var(--border);
-      background: #091426;
-    }
+      padding: 4px 7px;
 
-    .ai-status {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      border-radius: 6px;
 
-      margin-bottom: 8px;
+      background: rgba(255,255,255,.08);
 
-      font-size: 11px;
-      color: var(--muted);
-    }
-
-    .ai-label {
-      color: var(--purple);
-      font-weight: 700;
-    }
-
-    textarea {
-      width: 100%;
-      min-height: 86px;
-      max-height: 180px;
-
-      resize: vertical;
-
-      background: var(--panel);
-      color: white;
-
-      border: 1px solid var(--border);
-      border-radius: 10px;
-
-      padding: 12px;
-
-      outline: none;
-    }
-
-    .composer-actions {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-
-      margin-top: 9px;
-    }
-
-    .left-actions,
-    .right-actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    .btn {
-      border: 0;
-      border-radius: 8px;
-
-      padding: 10px 14px;
-
-      font-weight: 700;
-    }
-
-    .btn-secondary {
-      background: #1a2941;
-      color: white;
-    }
-
-    .btn-ai {
-      background: #493887;
-      color: white;
-    }
-
-    .btn-send {
-      background: var(--green);
-      color: #04160e;
+      font-size: 10px;
     }
 
     /* =====================================================
@@ -559,20 +586,55 @@
 
     .loading {
       padding: 30px;
+
+      color: #8da5c3;
+
       text-align: center;
-      color: var(--muted);
     }
 
     .error {
-      margin: 12px;
-      padding: 12px;
+      margin: 16px;
+      padding: 14px;
 
-      background: #411923;
-      border: 1px solid #71303e;
+      border-radius: 9px;
+      border: 1px solid #783342;
 
-      border-radius: 8px;
+      background: #481d27;
+
       color: #ff9eaa;
 
+      font-size: 13px;
+    }
+
+    /* =====================================================
+       RODAPÉ DA CONVERSA
+    ===================================================== */
+
+    .conversation-bottom {
+      min-height: 54px;
+
+      padding: 12px 20px;
+
+      background: #081426;
+
+      border-top: 1px solid var(--border);
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .control {
+      font-size: 12px;
+      color: #89a8cb;
+    }
+
+    .control strong {
+      color: var(--purple);
+    }
+
+    .monitoring {
+      color: #68dca4;
       font-size: 12px;
     }
 
@@ -580,611 +642,815 @@
        RESPONSIVO
     ===================================================== */
 
-    @media (max-width: 850px) {
+    @media (max-width: 900px) {
       .app {
-        grid-template-columns: 320px 1fr;
-      }
-
-      .stats {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 340px 1fr;
       }
     }
+
   </style>
 </head>
 
 <body>
 
-  <!-- =====================================================
-       CABEÇALHO
-  ====================================================== -->
+<header class="topbar">
 
-  <header class="topbar">
+  <div class="brand">
 
-    <div class="brand">
-
-      <div class="logo">
-        M
-      </div>
-
-      <div>
-        <h1>Matrix AI — Central SAC</h1>
-        <small>Atendimento inteligente em tempo real</small>
-      </div>
-
+    <div class="logo">
+      M
     </div>
 
-    <div class="top-status">
-
-      <span id="lastUpdate">
-        Aguardando dados...
-      </span>
-
-      <span class="online">
-        <span class="online-dot"></span>
-        SISTEMA ONLINE
-      </span>
-
+    <div>
+      <h1>Matrix AI — Central SAC</h1>
+      <small>Atendimento inteligente em tempo real</small>
     </div>
-
-  </header>
-
-
-  <!-- =====================================================
-       APP
-  ====================================================== -->
-
-  <div class="app">
-
-    <!-- ===================================================
-         SIDEBAR
-    ==================================================== -->
-
-    <aside class="sidebar">
-
-      <div class="stats">
-
-        <div class="stat">
-          <strong id="totalCount">0</strong>
-          <span>Conversas</span>
-        </div>
-
-        <div class="stat">
-          <strong id="reviewCount">0</strong>
-          <span>Revisão</span>
-        </div>
-
-        <div class="stat">
-          <strong id="unreadCount">0</strong>
-          <span>Não lidas</span>
-        </div>
-
-      </div>
-
-
-      <div class="toolbar">
-
-        <input
-          id="searchInput"
-          class="search"
-          placeholder="Buscar cliente ou mensagem..."
-        />
-
-        <div class="filters">
-
-          <button
-            class="filter active"
-            data-filter="all"
-          >
-            Todos
-          </button>
-
-          <button
-            class="filter"
-            data-filter="review"
-          >
-            Revisão
-          </button>
-
-          <button
-            class="filter"
-            data-filter="whatsapp"
-          >
-            WhatsApp
-          </button>
-
-          <button
-            class="filter refresh-btn"
-            id="refreshButton"
-            title="Atualizar"
-          >
-            ↻
-          </button>
-
-        </div>
-
-      </div>
-
-
-      <div
-        id="conversationList"
-        class="conversation-list"
-      >
-
-        <div class="loading">
-          Carregando atendimentos...
-        </div>
-
-      </div>
-
-    </aside>
-
-
-    <!-- ===================================================
-         CONVERSA
-    ==================================================== -->
-
-    <main class="main">
-
-      <div
-        id="emptyState"
-        class="empty"
-      >
-
-        <div class="empty-inner">
-
-          <div class="empty-icon">
-            💬
-          </div>
-
-          <h2>Central SAC Matrix</h2>
-
-          <p>
-            Selecione um atendimento ao lado para acompanhar
-            em tempo real o que a IA está fazendo.
-          </p>
-
-        </div>
-
-      </div>
-
-
-      <section
-        id="chatPanel"
-        class="chat"
-      >
-
-        <!-- CABEÇALHO DA CONVERSA -->
-
-        <div class="chat-header">
-
-          <div class="chat-title">
-
-            <h2 id="chatName">
-              Cliente
-            </h2>
-
-            <p id="chatInfo">
-              Atendimento
-            </p>
-
-          </div>
-
-          <div class="header-actions">
-
-            <button
-              class="action-btn"
-              id="reloadConversation"
-            >
-              ↻ Atualizar
-            </button>
-
-          </div>
-
-        </div>
-
-
-        <!-- MENSAGENS -->
-
-        <div
-          id="messages"
-          class="messages"
-        >
-        </div>
-
-
-        <!-- COMPOSER -->
-
-        <div class="composer">
-
-          <div class="ai-status">
-
-            <span>
-              Controle:
-              <strong
-                id="controlMode"
-                class="ai-label"
-              >
-                IA
-              </strong>
-            </span>
-
-            <span id="reviewStatus">
-            </span>
-
-          </div>
-
-
-          <textarea
-            id="replyText"
-            placeholder="Digite uma resposta manual ou gere um rascunho com a IA..."
-          ></textarea>
-
-
-          <div class="composer-actions">
-
-            <div class="left-actions">
-
-              <button
-                id="draftButton"
-                class="btn btn-ai"
-              >
-                ✨ Gerar resposta IA
-              </button>
-
-            </div>
-
-
-            <div class="right-actions">
-
-              <button
-                id="sendButton"
-                class="btn btn-send"
-              >
-                Enviar resposta
-              </button>
-
-            </div>
-
-          </div>
-
-        </div>
-
-      </section>
-
-    </main>
 
   </div>
 
+  <div class="top-status">
 
-  <script>
+    <span id="lastUpdate">
+      Iniciando...
+    </span>
 
-    // =====================================================
-    // CONFIGURAÇÃO
-    // =====================================================
+    <span class="online">
+      <span class="online-dot"></span>
+      SISTEMA ONLINE
+    </span>
 
-    const API_LIVE = "/sac/central/live";
-    const API_BASE = "/api";
+  </div>
 
-    let conversations = [];
-    let selectedConversation = null;
-    let currentFilter = "all";
-
-
-    // =====================================================
-    // ELEMENTOS
-    // =====================================================
-
-    const listElement =
-      document.getElementById("conversationList");
-
-    const emptyState =
-      document.getElementById("emptyState");
-
-    const chatPanel =
-      document.getElementById("chatPanel");
-
-    const messagesElement =
-      document.getElementById("messages");
-
-    const searchInput =
-      document.getElementById("searchInput");
-
-    const replyText =
-      document.getElementById("replyText");
+</header>
 
 
-    // =====================================================
-    // UTILIDADES
-    // =====================================================
+<div class="app">
 
-    function escapeHtml(value) {
+  <!-- ===================================================
+       SIDEBAR
+  ==================================================== -->
 
-      return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
+  <aside class="sidebar">
+
+    <div class="stats">
+
+      <div class="stat">
+        <strong id="totalCount">0</strong>
+        <span>Conversas</span>
+      </div>
+
+      <div class="stat">
+        <strong id="reviewCount">0</strong>
+        <span>Revisão</span>
+      </div>
+
+      <div class="stat">
+        <strong id="unreadCount">0</strong>
+        <span>Não lidas</span>
+      </div>
+
+    </div>
+
+
+    <div class="toolbar">
+
+      <input
+        id="searchInput"
+        class="search"
+        placeholder="Buscar cliente ou mensagem..."
+      />
+
+      <div class="filters">
+
+        <button
+          class="filter active"
+          data-filter="all"
+        >
+          Todos
+        </button>
+
+        <button
+          class="filter"
+          data-filter="review"
+        >
+          Revisão
+        </button>
+
+        <button
+          class="filter"
+          data-filter="whatsapp"
+        >
+          WhatsApp
+        </button>
+
+        <button
+          id="refreshButton"
+          class="filter refresh-btn"
+          title="Atualizar agora"
+        >
+          ↻
+        </button>
+
+      </div>
+
+    </div>
+
+
+    <div
+      id="conversationList"
+      class="conversation-list"
+    >
+
+      <div class="loading">
+        Carregando atendimentos...
+      </div>
+
+    </div>
+
+  </aside>
+
+
+  <!-- ===================================================
+       PAINEL
+  ==================================================== -->
+
+  <main class="main">
+
+    <div
+      id="emptyState"
+      class="empty"
+    >
+
+      <div class="empty-inner">
+
+        <div class="empty-icon">
+          💬
+        </div>
+
+        <h2>
+          Central SAC Matrix
+        </h2>
+
+        <p>
+          Selecione um atendimento ao lado para acompanhar
+          em tempo real o cliente e a inteligência artificial.
+        </p>
+
+      </div>
+
+    </div>
+
+
+    <section
+      id="chatPanel"
+      class="chat"
+    >
+
+      <div class="chat-header">
+
+        <div class="chat-title">
+
+          <h2 id="chatName">
+            Cliente
+          </h2>
+
+          <p id="chatInfo">
+            Atendimento
+          </p>
+
+          <div
+            id="chatBadges"
+            class="chat-state"
+          ></div>
+
+        </div>
+
+
+        <div class="header-actions">
+
+          <button
+            id="reloadConversation"
+            class="action-btn"
+          >
+            ↻ Atualizar conversa
+          </button>
+
+        </div>
+
+      </div>
+
+
+      <div
+        id="messages"
+        class="messages"
+      >
+      </div>
+
+
+      <div class="conversation-bottom">
+
+        <div class="control">
+
+          Controle:
+          <strong id="controlMode">
+            IA
+          </strong>
+
+        </div>
+
+        <div
+          id="monitorStatus"
+          class="monitoring"
+        >
+          ● Monitoramento em tempo real
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+</div>
+
+
+<script>
+
+  /* =====================================================
+     CONFIGURAÇÃO
+  ===================================================== */
+
+  const LIVE_ENDPOINT =
+    "/sac/central/live";
+
+  const CONVERSATION_ENDPOINT =
+    "/sac/central/conversation";
+
+
+  /*
+    Fila geral:
+    a cada 5 segundos.
+  */
+
+  const LIVE_INTERVAL =
+    5000;
+
+
+  /*
+    Conversa aberta:
+    a cada 3 segundos.
+  */
+
+  const CONVERSATION_INTERVAL =
+    3000;
+
+
+  let conversations = [];
+
+  let selectedConversation = null;
+
+  let currentFilter =
+    "all";
+
+  let conversationTimer =
+    null;
+
+  let liveTimer =
+    null;
+
+  let loadingConversation =
+    false;
+
+
+  /* =====================================================
+     ELEMENTOS
+  ===================================================== */
+
+  const listElement =
+    document.getElementById(
+      "conversationList"
+    );
+
+
+  const emptyState =
+    document.getElementById(
+      "emptyState"
+    );
+
+
+  const chatPanel =
+    document.getElementById(
+      "chatPanel"
+    );
+
+
+  const messagesElement =
+    document.getElementById(
+      "messages"
+    );
+
+
+  const searchInput =
+    document.getElementById(
+      "searchInput"
+    );
+
+
+  /* =====================================================
+     UTILIDADES
+  ===================================================== */
+
+  function escapeHtml(value) {
+
+    return String(
+      value ?? ""
+    )
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+
+  }
+
+
+  function formatDate(value) {
+
+    if (!value) {
+      return "";
     }
 
 
-    function formatDate(value) {
+    const date =
+      new Date(value);
 
-      if (!value) return "";
 
-      const date = new Date(value);
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return "";
+    }
 
-      if (Number.isNaN(date.getTime())) {
-        return "";
+
+    return date.toLocaleString(
+      "pt-BR",
+      {
+        day:
+          "2-digit",
+
+        month:
+          "2-digit",
+
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit"
       }
+    );
 
-      return date.toLocaleString(
+  }
+
+
+  function formatClock() {
+
+    return new Date()
+      .toLocaleTimeString(
         "pt-BR",
         {
-          day: "2-digit",
-          month: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit"
+          hour:
+            "2-digit",
+
+          minute:
+            "2-digit",
+
+          second:
+            "2-digit"
         }
       );
+
+  }
+
+
+  function directionOf(message) {
+
+    const direction =
+      String(
+        message.direction ||
+        ""
+      )
+      .toLowerCase();
+
+
+    if (
+      direction ===
+      "outbound"
+    ) {
+
+      return "outbound";
+
     }
 
 
-    // =====================================================
-    // CARREGAR CENTRAL
-    // =====================================================
+    return "inbound";
 
-    async function loadCentral() {
-
-      try {
-
-        document.getElementById(
-          "refreshButton"
-        ).textContent = "⟳";
+  }
 
 
-        const response =
-          await fetch(
-            API_LIVE,
-            {
-              cache: "no-store"
-            }
-          );
+  function messageText(message) {
+
+    return (
+      message.content ||
+      message.text ||
+      message.message ||
+      message.body ||
+      ""
+    );
+
+  }
 
 
-        const data =
-          await response.json();
+  function messageDate(message) {
+
+    return (
+      message.date_created ||
+      message.created_at ||
+      message.timestamp ||
+      ""
+    );
+
+  }
 
 
-        if (!response.ok || !data.sucesso) {
+  function messageAuthor(message) {
 
-          throw new Error(
-            data.mensagem ||
-            "Não foi possível carregar a central."
-          );
-
-        }
+    const direction =
+      directionOf(message);
 
 
-        conversations =
-          data.conversas || [];
+    if (
+      direction ===
+      "outbound"
+    ) {
+
+      if (
+        message.sender_role ===
+        "human"
+      ) {
+
+        return "Atendente";
+
+      }
 
 
-        updateStats();
+      return "Matrix AI";
 
-        renderConversationList();
-
-
-        document.getElementById(
-          "lastUpdate"
-        ).textContent =
-          "Atualizado " +
-          new Date().toLocaleTimeString(
-            "pt-BR",
-            {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit"
-            }
-          );
+    }
 
 
-        /*
-          Se uma conversa estiver aberta,
-          atualizamos os dados dela.
-        */
+    return "Cliente";
 
-        if (selectedConversation) {
-
-          const updated =
-            conversations.find(
-              item =>
-                item.id ===
-                selectedConversation.id
-            );
+  }
 
 
-          if (updated) {
+  function mediaType(message) {
 
-            selectedConversation = updated;
+    const type =
+      message.media_type ||
+      message.metadata?.media_type ||
+      message.metadata?.type ||
+      null;
 
-            renderSelectedConversation();
 
+    return type;
+
+  }
+
+
+  /* =====================================================
+     CARREGAR FILA
+  ===================================================== */
+
+  async function loadCentral() {
+
+    const button =
+      document.getElementById(
+        "refreshButton"
+      );
+
+
+    try {
+
+      button.textContent =
+        "⟳";
+
+
+      const response =
+        await fetch(
+          LIVE_ENDPOINT,
+          {
+            cache:
+              "no-store"
           }
-
-        }
-
-      }
-
-      catch (error) {
-
-        console.error(error);
-
-        listElement.innerHTML = `
-          <div class="error">
-            Erro ao carregar SAC:<br><br>
-            ${escapeHtml(error.message)}
-          </div>
-        `;
-
-      }
-
-      finally {
-
-        document.getElementById(
-          "refreshButton"
-        ).textContent = "↻";
-
-      }
-
-    }
-
-
-    // =====================================================
-    // ESTATÍSTICAS
-    // =====================================================
-
-    function updateStats() {
-
-      const total =
-        conversations.length;
-
-
-      const review =
-        conversations.filter(
-          item =>
-            item.requires_review === true
-        ).length;
-
-
-      const unread =
-        conversations.reduce(
-          (sum, item) =>
-            sum +
-            Number(item.unread_count || 0),
-          0
         );
 
 
-      document.getElementById(
-        "totalCount"
-      ).textContent = total;
+      const data =
+        await response.json();
+
+
+      if (
+        !response.ok ||
+        !data.sucesso
+      ) {
+
+        throw new Error(
+          data.mensagem ||
+          "Não foi possível carregar a Central SAC."
+        );
+
+      }
+
+
+      conversations =
+        data.conversas || [];
+
+
+      updateStats();
+
+      renderConversationList();
 
 
       document.getElementById(
-        "reviewCount"
-      ).textContent = review;
+        "lastUpdate"
+      ).textContent =
+        "Atualizado " +
+        formatClock();
 
 
-      document.getElementById(
-        "unreadCount"
-      ).textContent = unread;
+      /*
+        Mantém os dados básicos
+        da conversa selecionada atualizados.
+      */
+
+      if (
+        selectedConversation
+      ) {
+
+        const updated =
+          conversations.find(
+            item =>
+              String(item.id) ===
+              String(
+                selectedConversation.id
+              )
+          );
+
+
+        if (updated) {
+
+          selectedConversation = {
+            ...selectedConversation,
+            ...updated
+          };
+
+
+          renderChatHeader();
+
+        }
+
+      }
 
     }
 
+    catch (error) {
 
-    // =====================================================
-    // FILTRO
-    // =====================================================
-
-    function filteredConversations() {
-
-      const search =
-        searchInput.value
-          .trim()
-          .toLowerCase();
+      console.error(
+        "Erro carregando central:",
+        error
+      );
 
 
-      return conversations.filter(
-        item => {
+      listElement.innerHTML = `
 
-          if (
-            currentFilter === "review" &&
-            !item.requires_review
-          ) {
-            return false;
-          }
+        <div class="error">
+
+          Erro ao carregar SAC:
+
+          <br><br>
+
+          ${escapeHtml(
+            error.message
+          )}
+
+        </div>
+
+      `;
+
+    }
+
+    finally {
+
+      button.textContent =
+        "↻";
+
+    }
+
+  }
 
 
-          if (
-            currentFilter === "whatsapp" &&
-            item.channel !== "whatsapp"
-          ) {
-            return false;
-          }
+  /* =====================================================
+     ESTATÍSTICAS
+  ===================================================== */
+
+  function updateStats() {
+
+    const total =
+      conversations.length;
 
 
-          if (!search) {
-            return true;
-          }
+    const review =
+      conversations.filter(
+        item =>
+          item.requires_review ===
+          true
+      ).length;
 
 
-          const text = [
-            item.contact_name,
-            item.external_user_id,
-            item.last_message,
-            item.channel
-          ]
+    const unread =
+      conversations.reduce(
+        (sum, item) => {
+
+          return (
+            sum +
+            Number(
+              item.unread_count ||
+              0
+            )
+          );
+
+        },
+        0
+      );
+
+
+    document.getElementById(
+      "totalCount"
+    ).textContent =
+      total;
+
+
+    document.getElementById(
+      "reviewCount"
+    ).textContent =
+      review;
+
+
+    document.getElementById(
+      "unreadCount"
+    ).textContent =
+      unread;
+
+  }
+
+
+  /* =====================================================
+     FILTROS
+  ===================================================== */
+
+  function filteredConversations() {
+
+    const search =
+      searchInput.value
+        .trim()
+        .toLowerCase();
+
+
+    return conversations.filter(
+      item => {
+
+
+        if (
+          currentFilter ===
+          "review" &&
+          !item.requires_review
+        ) {
+
+          return false;
+
+        }
+
+
+        if (
+          currentFilter ===
+          "whatsapp" &&
+          item.channel !==
+          "whatsapp"
+        ) {
+
+          return false;
+
+        }
+
+
+        if (!search) {
+
+          return true;
+
+        }
+
+
+        const text = [
+
+          item.contact_name,
+
+          item.external_user_id,
+
+          item.last_message,
+
+          item.channel
+
+        ]
           .join(" ")
           .toLowerCase();
 
 
-          return text.includes(search);
+        return text.includes(
+          search
+        );
 
-        }
-      );
+      }
+    );
+
+  }
+
+
+  /* =====================================================
+     LISTA
+  ===================================================== */
+
+  function renderConversationList() {
+
+    const items =
+      filteredConversations();
+
+
+    if (
+      !items.length
+    ) {
+
+      listElement.innerHTML = `
+
+        <div class="loading">
+          Nenhum atendimento encontrado.
+        </div>
+
+      `;
+
+
+      return;
 
     }
 
 
-    // =====================================================
-    // LISTA DE CONVERSAS
-    // =====================================================
-
-    function renderConversationList() {
-
-      const filtered =
-        filteredConversations();
-
-
-      if (!filtered.length) {
-
-        listElement.innerHTML = `
-          <div class="loading">
-            Nenhum atendimento encontrado.
-          </div>
-        `;
-
-        return;
-      }
-
-
-      listElement.innerHTML =
-        filtered.map(
+    listElement.innerHTML =
+      items
+        .map(
           item => {
+
 
             const active =
               selectedConversation &&
-              selectedConversation.id === item.id;
+              String(
+                selectedConversation.id
+              ) ===
+              String(item.id);
 
 
-            const channelClass =
-              item.channel === "whatsapp"
-                ? "whatsapp"
-                : "";
+            const whatsapp =
+              item.channel ===
+              "whatsapp";
 
 
-            let badges = "";
+            let badges =
+              "";
 
 
             if (
-              item.control_mode === "ai"
+              item.control_mode ===
+              "human"
             ) {
 
               badges += `
-                <span class="badge badge-ai">
-                  IA
+
+                <span
+                  class="badge badge-human"
+                >
+                  HUMANO
                 </span>
+
               `;
 
             }
@@ -1192,33 +1458,74 @@
             else {
 
               badges += `
-                <span class="badge badge-human">
-                  HUMANO
+
+                <span
+                  class="badge badge-ai"
+                >
+                  IA
                 </span>
-              `;
 
-            }
-
-
-            if (item.requires_review) {
-
-              badges += `
-                <span class="badge badge-review">
-                  REVISAR
-                </span>
               `;
 
             }
 
 
             if (
-              Number(item.open_audits || 0) > 0
+              item.requires_review
             ) {
 
               badges += `
-                <span class="badge badge-danger">
+
+                <span
+                  class="badge badge-review"
+                >
+                  REVISAR
+                </span>
+
+              `;
+
+            }
+
+
+            if (
+              Number(
+                item.open_audits ||
+                0
+              ) > 0
+            ) {
+
+              badges += `
+
+                <span
+                  class="badge badge-danger"
+                >
                   ALERTA
                 </span>
+
+              `;
+
+            }
+
+
+            if (
+              Number(
+                item.unread_count ||
+                0
+              ) > 0
+            ) {
+
+              badges += `
+
+                <span
+                  class="badge badge-unread"
+                >
+                  ${
+                    Number(
+                      item.unread_count
+                    )
+                  } nova(s)
+                </span>
+
               `;
 
             }
@@ -1227,68 +1534,81 @@
             return `
 
               <div
-                class="conversation ${active ? "active" : ""}"
-                data-id="${escapeHtml(item.id)}"
+
+                class="conversation ${
+                  active
+                    ? "active"
+                    : ""
+                }"
+
+                data-id="${
+                  escapeHtml(
+                    item.id
+                  )
+                }"
+
               >
 
                 <div class="conversation-top">
 
                   <div class="contact-name">
-                    ${escapeHtml(
-                      item.contact_name ||
-                      item.external_user_id ||
-                      "Cliente"
-                    )}
+
+                    ${
+                      escapeHtml(
+                        item.contact_name ||
+                        item.external_user_id ||
+                        "Cliente"
+                      )
+                    }
+
                   </div>
 
                   <div class="time">
-                    ${formatDate(
-                      item.last_message_at
-                    )}
+
+                    ${
+                      formatDate(
+                        item.last_message_at
+                      )
+                    }
+
                   </div>
 
                 </div>
 
 
                 <span
-                  class="channel ${channelClass}"
+                  class="channel ${
+                    whatsapp
+                      ? "whatsapp"
+                      : ""
+                  }"
                 >
-                  ${escapeHtml(
-                    item.channel ||
-                    "SAC"
-                  )}
+
+                  ${
+                    escapeHtml(
+                      item.channel ||
+                      "SAC"
+                    )
+                  }
+
                 </span>
 
 
                 <div class="last-message">
-                  ${escapeHtml(
-                    item.last_message ||
-                    "Sem mensagem"
-                  )}
+
+                  ${
+                    escapeHtml(
+                      item.last_message ||
+                      "Sem mensagem"
+                    )
+                  }
+
                 </div>
 
 
                 <div class="conversation-footer">
 
                   ${badges}
-
-                  ${
-                    Number(
-                      item.unread_count || 0
-                    ) > 0
-                    ?
-                    `
-                    <span class="badge badge-open">
-                      ${
-                        Number(
-                          item.unread_count
-                        )
-                      } nova(s)
-                    </span>
-                    `
-                    :
-                    ""
-                  }
 
                 </div>
 
@@ -1301,515 +1621,23 @@
         .join("");
 
 
-      document
-        .querySelectorAll(
-          ".conversation"
-        )
-        .forEach(
-          element => {
-
-            element.addEventListener(
-              "click",
-              () => {
-
-                selectConversation(
-                  element.dataset.id
-                );
-
-              }
-            );
-
-          }
-        );
-
-    }
-
-
-    // =====================================================
-    // SELECIONAR CONVERSA
-    // =====================================================
-
-    function selectConversation(id) {
-
-      const conversation =
-        conversations.find(
-          item =>
-            String(item.id) ===
-            String(id)
-        );
-
-
-      if (!conversation) {
-        return;
-      }
-
-
-      selectedConversation =
-        conversation;
-
-
-      emptyState.style.display =
-        "none";
-
-
-      chatPanel.style.display =
-        "flex";
-
-
-      renderConversationList();
-
-      renderSelectedConversation();
-
-    }
-
-
-    // =====================================================
-    // CONVERSA SELECIONADA
-    // =====================================================
-
-    function renderSelectedConversation() {
-
-      if (!selectedConversation) {
-        return;
-      }
-
-
-      document.getElementById(
-        "chatName"
-      ).textContent =
-        selectedConversation.contact_name ||
-        selectedConversation.external_user_id ||
-        "Cliente";
-
-
-      document.getElementById(
-        "chatInfo"
-      ).textContent =
-        [
-          selectedConversation.channel,
-          selectedConversation.external_user_id,
-          selectedConversation.status
-        ]
-        .filter(Boolean)
-        .join(" • ");
-
-
-      document.getElementById(
-        "controlMode"
-      ).textContent =
-        selectedConversation.control_mode === "ai"
-          ? "IA"
-          : "HUMANO";
-
-
-      document.getElementById(
-        "reviewStatus"
-      ).textContent =
-        selectedConversation.requires_review
-          ? "⚠ Requer revisão"
-          : "✓ Atendimento normal";
-
-
-      renderMessages();
-
-    }
-
-
-    // =====================================================
-    // MENSAGENS
-    // =====================================================
-
-    function renderMessages() {
-
-      messagesElement.innerHTML = "";
-
-
-      /*
-        A rota live que montamos já fornece
-        a última mensagem.
-
-        Se ela também trouxer "messages"
-        ou "mensagens", mostramos o histórico.
-      */
-
-      const messages =
-        selectedConversation.messages ||
-        selectedConversation.mensagens ||
-        [];
-
-
-      if (messages.length) {
-
-        messages.forEach(
-          message => {
-
-            addMessageBubble(
-              message.text ||
-              message.message ||
-              message.body ||
-              "",
-              message.direction ||
-              message.direcao ||
-              "inbound",
-              message.created_at ||
-              message.timestamp
-            );
-
-          }
-        );
-
-      }
-
-      else if (
-        selectedConversation.last_message
-      ) {
-
-        addMessageBubble(
-          selectedConversation.last_message,
-          selectedConversation.last_message_direction ||
-          "inbound",
-          selectedConversation.last_message_at
-        );
-
-      }
-
-      else {
-
-        messagesElement.innerHTML = `
-          <div class="loading">
-            Nenhuma mensagem disponível.
-          </div>
-        `;
-
-      }
-
-
-      messagesElement.scrollTop =
-        messagesElement.scrollHeight;
-
-    }
-
-
-    function addMessageBubble(
-      text,
-      direction,
-      timestamp
-    ) {
-
-      const row =
-        document.createElement("div");
-
-
-      const normalizedDirection =
-        direction === "outbound"
-          ? "outbound"
-          : "inbound";
-
-
-      row.className =
-        "message-row " +
-        normalizedDirection;
-
-
-      row.innerHTML = `
-
-        <div class="bubble">
-
-          ${escapeHtml(text)}
-
-          <span class="message-meta">
-            ${formatDate(timestamp)}
-          </span>
-
-        </div>
-
-      `;
-
-
-      messagesElement.appendChild(row);
-
-    }
-
-
-    // =====================================================
-    // GERAR RASCUNHO IA
-    // =====================================================
-
-    async function generateDraft() {
-
-      if (!selectedConversation) {
-        return;
-      }
-
-
-      const button =
-        document.getElementById(
-          "draftButton"
-        );
-
-
-      const original =
-        button.textContent;
-
-
-      button.disabled = true;
-
-      button.textContent =
-        "Gerando...";
-
-
-      try {
-
-        const response =
-          await fetch(
-            `${API_BASE}/sac/${selectedConversation.id}/draft`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type":
-                  "application/json"
-              }
-            }
-          );
-
-
-        const data =
-          await response.json();
-
-
-        if (
-          !response.ok ||
-          !data.sucesso
-        ) {
-
-          throw new Error(
-            data.mensagem ||
-            "Erro ao gerar resposta."
-          );
-
-        }
-
-
-        const atendimento =
-          data.atendimento || {};
-
-
-        const draft =
-          atendimento.ai_draft ||
-          atendimento.draft ||
-          atendimento.suggested_reply ||
-          atendimento.response ||
-          "";
-
-
-        if (draft) {
-
-          replyText.value =
-            typeof draft === "string"
-              ? draft
-              : JSON.stringify(
-                  draft,
-                  null,
-                  2
-                );
-
-        }
-
-        else {
-
-          alert(
-            "A IA processou o atendimento, mas a resposta não veio em um campo reconhecido pela interface."
-          );
-
-        }
-
-      }
-
-      catch (error) {
-
-        alert(
-          "Erro ao gerar resposta IA:\n\n" +
-          error.message
-        );
-
-      }
-
-      finally {
-
-        button.disabled = false;
-
-        button.textContent =
-          original;
-
-      }
-
-    }
-
-
-    // =====================================================
-    // ENVIAR RESPOSTA
-    // =====================================================
-
-    async function sendReply() {
-
-      if (!selectedConversation) {
-        return;
-      }
-
-
-      const text =
-        replyText.value.trim();
-
-
-      if (!text) {
-
-        alert(
-          "Digite uma resposta antes de enviar."
-        );
-
-        return;
-
-      }
-
-
-     
-
-
-      const button =
-        document.getElementById(
-          "sendButton"
-        );
-
-
-      const original =
-        button.textContent;
-
-
-      button.disabled = true;
-
-      button.textContent =
-        "Enviando...";
-
-
-      try {
-
-        const response =
-          await fetch(
-            `/sac/${selectedConversation.id}/send`,
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
-
-              body: JSON.stringify({
-                text
-              })
-            }
-          );
-
-
-        const data =
-          await response.json();
-
-
-        if (
-          !response.ok ||
-          !data.sucesso
-        ) {
-
-          throw new Error(
-            data.mensagem ||
-            "Erro ao enviar resposta."
-          );
-
-        }
-
-
-        replyText.value = "";
-
-
-        alert(
-          "Resposta enviada com sucesso."
-        );
-
-
-        await loadCentral();
-
-      }
-
-      catch (error) {
-
-        alert(
-          "Erro ao enviar resposta:\n\n" +
-          error.message
-        );
-
-      }
-
-      finally {
-
-        button.disabled = false;
-
-        button.textContent =
-          original;
-
-      }
-
-    }
-
-
-    // =====================================================
-    // EVENTOS
-    // =====================================================
-
-    searchInput.addEventListener(
-      "input",
-      renderConversationList
-    );
-
-
     document
-      .querySelectorAll(".filter")
+      .querySelectorAll(
+        ".conversation"
+      )
       .forEach(
-        button => {
-
-          if (
-            button.id ===
-            "refreshButton"
-          ) {
-            return;
-          }
+        element => {
 
 
-          button.addEventListener(
+          element.addEventListener(
             "click",
             () => {
 
-              document
-                .querySelectorAll(
-                  ".filter"
-                )
-                .forEach(
-                  item =>
-                    item.classList.remove(
-                      "active"
-                    )
-                );
 
-
-              button.classList.add(
-                "active"
+              selectConversation(
+                element.dataset.id
               );
 
-
-              currentFilter =
-                button.dataset.filter;
-
-
-              renderConversationList();
 
             }
           );
@@ -1817,59 +1645,787 @@
         }
       );
 
-
-    document.getElementById(
-      "refreshButton"
-    ).addEventListener(
-      "click",
-      loadCentral
-    );
+  }
 
 
-    document.getElementById(
-      "reloadConversation"
-    ).addEventListener(
-      "click",
-      loadCentral
-    );
+  /* =====================================================
+     SELECIONAR CONVERSA
+  ===================================================== */
+
+  async function selectConversation(id) {
+
+    const conversation =
+      conversations.find(
+        item =>
+          String(item.id) ===
+          String(id)
+      );
 
 
-    document.getElementById(
-      "draftButton"
-    ).addEventListener(
-      "click",
-      generateDraft
-    );
+    if (
+      !conversation
+    ) {
+
+      return;
+
+    }
 
 
-    document.getElementById(
-      "sendButton"
-    ).addEventListener(
-      "click",
-      sendReply
-    );
+    selectedConversation =
+      conversation;
 
 
-    // =====================================================
-    // INICIALIZAÇÃO
-    // =====================================================
+    emptyState.style.display =
+      "none";
 
-    loadCentral();
+
+    chatPanel.style.display =
+      "flex";
+
+
+    renderConversationList();
+
+    renderChatHeader();
 
 
     /*
-      Atualização automática.
-
-      Apenas consulta a central.
-      Não envia mensagem.
+      Cancela qualquer polling anterior.
     */
 
-    setInterval(
-      loadCentral,
-      10000
+    stopConversationPolling();
+
+
+    /*
+      Busca histórico completo agora.
+    */
+
+    await loadSelectedConversation(
+      true
     );
 
-  </script>
+
+    /*
+      Depois começa atualização automática.
+    */
+
+    startConversationPolling();
+
+  }
+
+
+  /* =====================================================
+     CABEÇALHO
+  ===================================================== */
+
+  function renderChatHeader() {
+
+    if (
+      !selectedConversation
+    ) {
+
+      return;
+
+    }
+
+
+    document.getElementById(
+      "chatName"
+    ).textContent =
+
+      selectedConversation.contact_name ||
+
+      selectedConversation.external_user_id ||
+
+      "Cliente";
+
+
+    document.getElementById(
+      "chatInfo"
+    ).textContent =
+
+      [
+
+        selectedConversation.channel,
+
+        selectedConversation.external_user_id,
+
+        selectedConversation.status
+
+      ]
+        .filter(Boolean)
+        .join(" • ");
+
+
+    document.getElementById(
+      "controlMode"
+    ).textContent =
+
+      selectedConversation.control_mode ===
+      "human"
+
+        ? "HUMANO"
+
+        : "IA";
+
+
+    let badges =
+      "";
+
+
+    if (
+      selectedConversation.requires_review
+    ) {
+
+      badges += `
+
+        <span
+          class="badge badge-review"
+        >
+          ⚠ REQUER REVISÃO
+        </span>
+
+      `;
+
+    }
+
+
+    if (
+      selectedConversation.attention_level ===
+      "urgent"
+    ) {
+
+      badges += `
+
+        <span
+          class="badge badge-danger"
+        >
+          URGENTE
+        </span>
+
+      `;
+
+    }
+
+
+    document.getElementById(
+      "chatBadges"
+    ).innerHTML =
+      badges;
+
+  }
+
+
+  /* =====================================================
+     CARREGAR HISTÓRICO COMPLETO
+  ===================================================== */
+
+  async function loadSelectedConversation(
+    showLoading = false
+  ) {
+
+    if (
+      !selectedConversation ||
+      loadingConversation
+    ) {
+
+      return;
+
+    }
+
+
+    const conversationId =
+      selectedConversation.id;
+
+
+    loadingConversation =
+      true;
+
+
+    /*
+      Descobre se usuário estava
+      perto do final da conversa.
+    */
+
+    const distanceFromBottom =
+
+      messagesElement.scrollHeight -
+
+      messagesElement.scrollTop -
+
+      messagesElement.clientHeight;
+
+
+    const wasNearBottom =
+      distanceFromBottom <
+      120;
+
+
+    try {
+
+      if (
+        showLoading
+      ) {
+
+        messagesElement.innerHTML = `
+
+          <div class="loading">
+            Carregando conversa completa...
+          </div>
+
+        `;
+
+      }
+
+
+      const response =
+        await fetch(
+
+          `${CONVERSATION_ENDPOINT}/${conversationId}?limit=500`,
+
+          {
+            cache:
+              "no-store"
+          }
+
+        );
+
+
+      const data =
+        await response.json();
+
+
+      if (
+        !response.ok ||
+        !data.sucesso
+      ) {
+
+        throw new Error(
+
+          data.mensagem ||
+
+          "Erro ao carregar conversa."
+
+        );
+
+      }
+
+
+      /*
+        Confere se usuário não mudou
+        para outra conversa durante
+        o fetch.
+      */
+
+      if (
+        !selectedConversation ||
+        String(
+          selectedConversation.id
+        ) !==
+        String(
+          conversationId
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      selectedConversation = {
+
+        ...selectedConversation,
+
+        ...(data.conversa || {}),
+
+        mensagens:
+          data.mensagens || [],
+
+        auditorias:
+          data.auditorias || [],
+
+        eventos_controle:
+          data.eventos_controle || [],
+
+        correcoes:
+          data.correcoes || []
+
+      };
+
+
+      renderChatHeader();
+
+
+      renderMessages(
+        wasNearBottom ||
+        showLoading
+      );
+
+
+      document.getElementById(
+        "monitorStatus"
+      ).textContent =
+
+        "● Atualizado " +
+        formatClock();
+
+    }
+
+    catch (error) {
+
+      console.error(
+        "Erro carregando conversa:",
+        error
+      );
+
+
+      messagesElement.innerHTML = `
+
+        <div class="error">
+
+          Não foi possível carregar
+          o histórico completo.
+
+          <br><br>
+
+          ${
+            escapeHtml(
+              error.message
+            )
+          }
+
+        </div>
+
+      `;
+
+
+      document.getElementById(
+        "monitorStatus"
+      ).textContent =
+        "⚠ Erro na atualização";
+
+    }
+
+    finally {
+
+      loadingConversation =
+        false;
+
+    }
+
+  }
+
+
+  /* =====================================================
+     RENDERIZAR MENSAGENS
+  ===================================================== */
+
+  function renderMessages(
+    scrollToBottom = false
+  ) {
+
+    if (
+      !selectedConversation
+    ) {
+
+      return;
+
+    }
+
+
+    const messages =
+      selectedConversation.mensagens ||
+      [];
+
+
+    if (
+      !messages.length
+    ) {
+
+      messagesElement.innerHTML = `
+
+        <div class="loading">
+          Ainda não existem mensagens
+          registradas nesta conversa.
+        </div>
+
+      `;
+
+
+      return;
+
+    }
+
+
+    messagesElement.innerHTML =
+
+      messages
+        .map(
+          message => {
+
+
+            const direction =
+              directionOf(
+                message
+              );
+
+
+            const text =
+              messageText(
+                message
+              );
+
+
+            const date =
+              messageDate(
+                message
+              );
+
+
+            const author =
+              messageAuthor(
+                message
+              );
+
+
+            const type =
+              mediaType(
+                message
+              );
+
+
+            let media =
+              "";
+
+
+            if (
+              type
+            ) {
+
+              media = `
+
+                <span class="media-label">
+
+                  ${
+                    escapeHtml(
+                      String(type)
+                        .toUpperCase()
+                    )
+                  }
+
+                </span>
+
+                <br>
+
+              `;
+
+            }
+
+
+            return `
+
+              <div
+                class="message-row ${
+                  direction
+                }"
+              >
+
+                <div class="bubble">
+
+                  <span
+                    class="message-author"
+                  >
+                    ${
+                      escapeHtml(
+                        author
+                      )
+                    }
+                  </span>
+
+                  ${media}
+
+                  ${
+                    escapeHtml(
+                      text ||
+                      "[Mensagem sem texto]"
+                    )
+                  }
+
+                  <span
+                    class="message-meta"
+                  >
+
+                    ${
+                      formatDate(
+                        date
+                      )
+                    }
+
+                  </span>
+
+                </div>
+
+              </div>
+
+            `;
+
+          }
+        )
+        .join("");
+
+
+    if (
+      scrollToBottom
+    ) {
+
+      messagesElement.scrollTop =
+        messagesElement.scrollHeight;
+
+    }
+
+  }
+
+
+  /* =====================================================
+     POLLING DA CONVERSA
+  ===================================================== */
+
+  function startConversationPolling() {
+
+    stopConversationPolling();
+
+
+    conversationTimer =
+      setInterval(
+        () => {
+
+          loadSelectedConversation(
+            false
+          );
+
+        },
+
+        CONVERSATION_INTERVAL
+      );
+
+  }
+
+
+  function stopConversationPolling() {
+
+    if (
+      conversationTimer
+    ) {
+
+      clearInterval(
+        conversationTimer
+      );
+
+
+      conversationTimer =
+        null;
+
+    }
+
+  }
+
+
+  /* =====================================================
+     POLLING DA FILA
+  ===================================================== */
+
+  function startLivePolling() {
+
+    if (
+      liveTimer
+    ) {
+
+      clearInterval(
+        liveTimer
+      );
+
+    }
+
+
+    liveTimer =
+      setInterval(
+        loadCentral,
+        LIVE_INTERVAL
+      );
+
+  }
+
+
+  /* =====================================================
+     EVENTOS
+  ===================================================== */
+
+  searchInput.addEventListener(
+    "input",
+    renderConversationList
+  );
+
+
+  document
+    .querySelectorAll(
+      ".filter"
+    )
+    .forEach(
+      button => {
+
+
+        if (
+          button.id ===
+          "refreshButton"
+        ) {
+
+          return;
+
+        }
+
+
+        button.addEventListener(
+          "click",
+          () => {
+
+
+            document
+              .querySelectorAll(
+                ".filter"
+              )
+              .forEach(
+                item => {
+
+                  if (
+                    item.id !==
+                    "refreshButton"
+                  ) {
+
+                    item.classList.remove(
+                      "active"
+                    );
+
+                  }
+
+                }
+              );
+
+
+            button.classList.add(
+              "active"
+            );
+
+
+            currentFilter =
+              button.dataset.filter;
+
+
+            renderConversationList();
+
+          }
+        );
+
+      }
+    );
+
+
+  document.getElementById(
+    "refreshButton"
+  )
+    .addEventListener(
+      "click",
+      async () => {
+
+        await loadCentral();
+
+
+        if (
+          selectedConversation
+        ) {
+
+          await loadSelectedConversation(
+            false
+          );
+
+        }
+
+      }
+    );
+
+
+  document.getElementById(
+    "reloadConversation"
+  )
+    .addEventListener(
+      "click",
+      () => {
+
+        loadSelectedConversation(
+          false
+        );
+
+      }
+    );
+
+
+  /*
+    Para de fazer polling
+    quando a página fica invisível.
+
+    Volta automaticamente quando
+    usuário retorna à aba.
+  */
+
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+
+      if (
+        document.hidden
+      ) {
+
+        stopConversationPolling();
+
+      }
+
+      else {
+
+        loadCentral();
+
+
+        if (
+          selectedConversation
+        ) {
+
+          loadSelectedConversation(
+            false
+          );
+
+          startConversationPolling();
+
+        }
+
+      }
+
+    }
+  );
+
+
+  /* =====================================================
+     INICIALIZAÇÃO
+  ===================================================== */
+
+  async function init() {
+
+    await loadCentral();
+
+    startLivePolling();
+
+  }
+
+
+  init();
+
+</script>
 
 </body>
 </html>
