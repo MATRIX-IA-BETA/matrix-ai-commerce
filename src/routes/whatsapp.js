@@ -1,2606 +1,2042 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <title>Matrix AI — Central SAC</title>
-
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    :root {
-      --bg: #07101f;
-      --top: #081426;
-      --panel: #0d1728;
-      --panel2: #111d31;
-      --border: #22304a;
-
-      --text: #eef4ff;
-      --muted: #8fa1bd;
-
-      --green: #27d17f;
-      --yellow: #f7c948;
-      --red: #ff5c6c;
-      --blue: #4da3ff;
-      --purple: #9c7cff;
-
-      --inbound: #18243a;
-      --outbound: #154737;
-    }
-
-    body {
-      font-family: Inter, Arial, Helvetica, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      overflow: hidden;
-    }
-
-    button,
-    input,
-    textarea {
-      font: inherit;
-    }
-
-    button {
-      cursor: pointer;
-    }
-
-    /* =====================================================
-       TOPO
-    ===================================================== */
-
-    .topbar {
-      height: 76px;
-      background: var(--top);
-      border-bottom: 1px solid var(--border);
-
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-
-      padding: 0 28px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 15px;
-    }
-
-    .logo {
-      width: 48px;
-      height: 48px;
-
-      border-radius: 13px;
-
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      background: linear-gradient(
-        135deg,
-        #4da3ff,
-        #9877ff
-      );
-
-      font-size: 22px;
-      font-weight: 900;
-    }
-
-    .brand h1 {
-      font-size: 20px;
-      line-height: 1.1;
-    }
-
-    .brand small {
-      display: block;
-      margin-top: 5px;
-
-      color: #79a6dd;
-      font-size: 14px;
-    }
-
-    .top-status {
-      display: flex;
-      align-items: center;
-      gap: 22px;
-
-      color: #82a6cf;
-      font-size: 13px;
-    }
-
-    .online {
-      color: var(--green);
-      font-weight: 800;
-    }
-
-    .online-dot {
-      width: 9px;
-      height: 9px;
-
-      display: inline-block;
-      border-radius: 50%;
-
-      background: var(--green);
-
-      margin-right: 7px;
-    }
-
-    /* =====================================================
-       LAYOUT
-    ===================================================== */
-
-    .app {
-      height: calc(100vh - 76px);
-
-      display: grid;
-      grid-template-columns: 445px 1fr;
-    }
-
-    /* =====================================================
-       ESQUERDA
-    ===================================================== */
-
-    .sidebar {
-      background: #081426;
-      border-right: 1px solid var(--border);
-
-      min-width: 0;
-
-      display: flex;
-      flex-direction: column;
-    }
-
-    .stats {
-      padding: 18px 16px;
-
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-
-      border-bottom: 1px solid var(--border);
-    }
-
-    .stat {
-      min-height: 70px;
-
-      padding: 12px;
-
-      border-radius: 11px;
-      border: 1px solid var(--border);
-
-      background: #0b1729;
-    }
-
-    .stat strong {
-      display: block;
-
-      margin-bottom: 6px;
-
-      font-size: 21px;
-    }
-
-    .stat span {
-      color: #8babd1;
-      font-size: 12px;
-    }
-
-    .toolbar {
-      padding: 14px;
-
-      border-bottom: 1px solid var(--border);
-    }
-
-    .search {
-      width: 100%;
-
-      padding: 12px 14px;
-
-      background: #0b1729;
-      color: white;
-
-      border: 1px solid var(--border);
-      border-radius: 10px;
-
-      outline: none;
-
-      margin-bottom: 10px;
-    }
-
-    .filters {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .filter {
-      border: 1px solid var(--border);
-
-      background: #0b1729;
-      color: #9ab3d2;
-
-      padding: 9px 12px;
-      border-radius: 8px;
-    }
-
-    .filter.active {
-      background: #173f70;
-      color: white;
-
-      border-color: #397fcb;
-    }
-
-    .refresh-btn {
-      margin-left: auto;
-    }
-
-    .conversation-list {
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    .conversation {
-      padding: 15px 16px;
-
-      border-bottom: 1px solid #17263d;
-
-      cursor: pointer;
-
-      transition: 0.15s;
-    }
-
-    .conversation:hover {
-      background: #101e33;
-    }
-
-    .conversation.active {
-      padding-left: 12px;
-
-      background: #172a45;
-
-      border-left: 4px solid var(--blue);
-    }
-
-    .conversation-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-
-      gap: 8px;
-
-      margin-bottom: 7px;
-    }
-
-    .contact-name {
-      font-weight: 800;
-      font-size: 14px;
-
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-
-    .time {
-      color: #8da8c9;
-      font-size: 11px;
-
-      flex-shrink: 0;
-    }
-
-    .channel {
-      display: inline-block;
-
-      margin-bottom: 7px;
-
-      padding: 3px 8px;
-
-      border-radius: 20px;
-
-      background: #163352;
-      color: #8ac8ff;
-
-      font-size: 10px;
-    }
-
-    .channel.whatsapp {
-      background: #0e3b29;
-      color: #50e298;
-    }
-
-    .last-message {
-      color: #8fabcc;
-
-      font-size: 12px;
-      line-height: 1.45;
-
-      overflow: hidden;
-
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-    }
-
-    .conversation-footer {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-
-      margin-top: 9px;
-    }
-
-    .badge {
-      padding: 3px 7px;
-
-      border-radius: 20px;
-
-      font-size: 10px;
-    }
-
-    .badge-ai {
-      background: #382568;
-      color: #cbb9ff;
-    }
-
-    .badge-human {
-      background: #163a5b;
-      color: #93d0ff;
-    }
-
-    .badge-review {
-      background: #503c12;
-      color: #ffd977;
-    }
-
-    .badge-danger {
-      background: #501d28;
-      color: #ff8998;
-    }
-
-    .badge-unread {
-      background: #145434;
-      color: #6bf0aa;
-    }
-
-    /* =====================================================
-       ÁREA CENTRAL
-    ===================================================== */
-
-    .main {
-      min-width: 0;
-
-      display: flex;
-      flex-direction: column;
-
-      background: var(--bg);
-    }
-
-    .empty {
-      flex: 1;
-
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      text-align: center;
-
-      color: var(--muted);
-    }
-
-    .empty-inner {
-      max-width: 500px;
-    }
-
-    .empty-icon {
-      font-size: 56px;
-      margin-bottom: 18px;
-    }
-
-    .empty h2 {
-      color: white;
-
-      margin-bottom: 8px;
-
-      font-size: 25px;
-    }
-
-    .empty p {
-      font-size: 16px;
-      line-height: 1.5;
-    }
-
-    /* =====================================================
-       CHAT
-    ===================================================== */
-
-    .chat {
-      height: 100%;
-
-      display: none;
-      flex-direction: column;
-    }
-
-    .chat-header {
-      min-height: 88px;
-
-      padding: 16px 22px;
-
-      background: #081426;
-      border-bottom: 1px solid var(--border);
-
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-
-      gap: 20px;
-    }
-
-    .chat-title h2 {
-      font-size: 19px;
-
-      margin-bottom: 6px;
-    }
-
-    .chat-title p {
-      color: #74a0d1;
-      font-size: 12px;
-    }
-
-    .chat-state {
-      margin-top: 7px;
-
-      display: flex;
-      gap: 7px;
-    }
-
-    .header-actions {
-      display: flex;
-      gap: 9px;
-    }
-
-    .action-btn {
-      padding: 10px 14px;
-
-      border: 1px solid var(--border);
-      border-radius: 9px;
-
-      background: #0c1829;
-      color: white;
-    }
-
-    .action-btn:hover {
-      background: #13243c;
-    }
-
-    /* =====================================================
-       MENSAGENS
-    ===================================================== */
-
-    .messages {
-      flex: 1;
-
-      overflow-y: auto;
-
-      padding: 25px 30px;
-
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .message-row {
-      width: 100%;
-
-      display: flex;
-    }
-
-    .message-row.inbound {
-      justify-content: flex-start;
-    }
-
-    .message-row.outbound {
-      justify-content: flex-end;
-    }
-
-    .bubble {
-      max-width: 72%;
-
-      padding: 13px 15px;
-
-      border-radius: 14px;
-
-      font-size: 14px;
-      line-height: 1.5;
-
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .message-row.inbound .bubble {
-      background: var(--inbound);
-
-      border: 1px solid #273957;
-
-      border-bottom-left-radius: 4px;
-    }
-
-    .message-row.outbound .bubble {
-      background: var(--outbound);
-
-      border: 1px solid #236249;
-
-      border-bottom-right-radius: 4px;
-    }
-
-    .message-author {
-      display: block;
-
-      margin-bottom: 5px;
-
-      font-size: 10px;
-      font-weight: 800;
-
-      text-transform: uppercase;
-
-      color: #92acd0;
-    }
-
-    .outbound .message-author {
-      color: #6ce0a8;
-    }
-
-    .message-meta {
-      display: block;
-
-      margin-top: 8px;
-
-      color: #8298b7;
-
-      font-size: 10px;
-
-      text-align: right;
-    }
-
-    .media-label {
-      display: inline-block;
-
-      margin-bottom: 7px;
-
-      padding: 4px 7px;
-
-      border-radius: 6px;
-
-      background: rgba(255,255,255,.08);
-
-      font-size: 10px;
-    }
-
-    /* =====================================================
-       LOADING / ERRO
-    ===================================================== */
-
-    .loading {
-      padding: 30px;
-
-      color: #8da5c3;
-
-      text-align: center;
-    }
-
-    .error {
-      margin: 16px;
-      padding: 14px;
-
-      border-radius: 9px;
-      border: 1px solid #783342;
-
-      background: #481d27;
-
-      color: #ff9eaa;
-
-      font-size: 13px;
-    }
-
-    /* =====================================================
-       RODAPÉ DA CONVERSA
-    ===================================================== */
-
-    .conversation-bottom {
-      min-height: 54px;
-
-      padding: 12px 20px;
-
-      background: #081426;
-
-      border-top: 1px solid var(--border);
-
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .control {
-      font-size: 12px;
-      color: #89a8cb;
-    }
-
-    .control strong {
-      color: var(--purple);
-    }
-
-    .monitoring {
-      color: #68dca4;
-      font-size: 12px;
-    }
-
-    /* =====================================================
-       RESPONSIVO
-    ===================================================== */
-
-    @media (max-width: 900px) {
-      .app {
-        grid-template-columns: 340px 1fr;
-      }
-    }
-
-
-    /* =====================================================
-       COMPOSITOR / ENVIO MANUAL
-    ===================================================== */
-    .composer { flex: 0 0 auto; padding: 12px 18px 14px; background: #081426; border-top: 1px solid var(--border); }
-    .composer textarea { width: 100%; min-height: 74px; max-height: 180px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: #0b1729; color: var(--text); outline: none; line-height: 1.45; }
-    .composer textarea:focus { border-color: #397fcb; }
-    .composer-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-    .composer-status { flex: 1; min-width: 0; color: #8fa8c9; font-size: 12px; }
-    .composer-status.ok { color: #68dca4; }
-    .composer-status.error { color: #ff8b98; }
-    .composer-button { border: 0; border-radius: 9px; padding: 11px 16px; font-weight: 800; color: white; background: #3b2b75; }
-    .composer-button.send { color: #06170f; background: #27d17f; }
-    .composer-button:disabled { cursor: not-allowed; opacity: .55; }
-    .composer-hint { margin-top: 6px; color: #657b99; font-size: 10px; }
-
-    /* ===== CORREÇÃO DO PAINEL DE HISTÓRICO ===== */
-    html, body { height: 100%; }
-    .app, .sidebar, .main, .chat { min-height: 0; }
-    .main { overflow: hidden; }
-    .chat { height: 100%; min-height: 0; overflow: hidden; }
-    .chat-header, .conversation-bottom, .composer { flex: 0 0 auto; }
-    .messages {
-      flex: 1 1 auto;
-      min-height: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      padding: 22px 28px 30px;
-      scroll-behavior: smooth;
-      scrollbar-gutter: stable;
-    }
-    .message-row { width: 100%; flex: 0 0 auto; }
-    .bubble {
-      width: fit-content;
-      min-width: 280px;
-      max-width: min(760px, 78%);
-      padding: 12px 15px;
-    }
-    .message-row.inbound .bubble { margin-right: auto; }
-    .message-row.outbound .bubble { margin-left: auto; }
-    @media (max-width: 900px) {
-      .bubble { min-width: 0; max-width: 88%; }
-    }
-
-  </style>
-</head>
-
-<body>
-
-<header class="topbar">
-
-  <div class="brand">
-
-    <div class="logo">
-      M
-    </div>
-
-    <div>
-      <h1>Matrix AI — Central SAC</h1>
-      <small>Atendimento inteligente em tempo real</small>
-    </div>
-
-  </div>
-
-  <div class="top-status">
-
-    <span id="lastUpdate">
-      Iniciando...
-    </span>
-
-    <span class="online">
-      <span class="online-dot"></span>
-      SISTEMA ONLINE
-    </span>
-
-  </div>
-
-</header>
-
-
-<div class="app">
-
-  <!-- ===================================================
-       SIDEBAR
-  ==================================================== -->
-
-  <aside class="sidebar">
-
-    <div class="stats">
-
-      <div class="stat">
-        <strong id="totalCount">0</strong>
-        <span>Conversas</span>
-      </div>
-
-      <div class="stat">
-        <strong id="reviewCount">0</strong>
-        <span>Revisão</span>
-      </div>
-
-      <div class="stat">
-        <strong id="unreadCount">0</strong>
-        <span>Não lidas</span>
-      </div>
-
-    </div>
-
-
-    <div class="toolbar">
-
-      <input
-        id="searchInput"
-        class="search"
-        placeholder="Buscar cliente ou mensagem..."
-      />
-
-      <div class="filters">
-
-        <button
-          class="filter active"
-          data-filter="all"
-        >
-          Todos
-        </button>
-
-        <button
-          class="filter"
-          data-filter="review"
-        >
-          Revisão
-        </button>
-
-        <button
-          class="filter"
-          data-filter="whatsapp"
-        >
-          WhatsApp
-        </button>
-
-        <button
-          id="refreshButton"
-          class="filter refresh-btn"
-          title="Atualizar agora"
-        >
-          ↻
-        </button>
-
-      </div>
-
-    </div>
-
-
-    <div
-      id="conversationList"
-      class="conversation-list"
-    >
-
-      <div class="loading">
-        Carregando atendimentos...
-      </div>
-
-    </div>
-
-  </aside>
-
-
-  <!-- ===================================================
-       PAINEL
-  ==================================================== -->
-
-  <main class="main">
-
-    <div
-      id="emptyState"
-      class="empty"
-    >
-
-      <div class="empty-inner">
-
-        <div class="empty-icon">
-          💬
-        </div>
-
-        <h2>
-          Central SAC Matrix
-        </h2>
-
-        <p>
-          Selecione um atendimento ao lado para acompanhar
-          em tempo real o cliente e a inteligência artificial.
-        </p>
-
-      </div>
-
-    </div>
-
-
-    <section
-      id="chatPanel"
-      class="chat"
-    >
-
-      <div class="chat-header">
-
-        <div class="chat-title">
-
-          <h2 id="chatName">
-            Cliente
-          </h2>
-
-          <p id="chatInfo">
-            Atendimento
-          </p>
-
-          <div
-            id="chatBadges"
-            class="chat-state"
-          ></div>
-
-        </div>
-
-
-        <div class="header-actions">
-
-          <button
-            id="reloadConversation"
-            class="action-btn"
-          >
-            ↻ Atualizar conversa
-          </button>
-
-        </div>
-
-      </div>
-
-
-      <div
-        id="messages"
-        class="messages"
-      >
-      </div>
-
-
-      <div class="conversation-bottom">
-
-        <div class="control">
-
-          Controle:
-          <strong id="controlMode">
-            IA
-          </strong>
-
-        </div>
-
-        <div
-          id="monitorStatus"
-          class="monitoring"
-        >
-          ● Monitoramento em tempo real
-        </div>
-
-      </div>
-
-      <div class="composer">
-        <textarea id="replyInput" placeholder="Digite uma resposta manual ou gere um rascunho com a IA..."></textarea>
-        <div class="composer-actions">
-          <div id="composerStatus" class="composer-status">Pronto.</div>
-          <button id="generateDraftButton" class="composer-button" type="button">✨ Gerar resposta IA</button>
-          <button id="sendReplyButton" class="composer-button send" type="button">Enviar</button>
-        </div>
-        <div class="composer-hint">Ctrl + Enter envia a mensagem.</div>
-      </div>
-
-    </section>
-
-  </main>
-
-</div>
-
-
-<script>
-
-  /* =====================================================
-     CONFIGURAÇÃO
-  ===================================================== */
-
-  const LIVE_ENDPOINT =
-    "/sac/central/live";
-
-  const CONVERSATION_ENDPOINT =
-    "/sac/central/conversation";
-
-
-  /*
-    Fila geral:
-    a cada 5 segundos.
-  */
-
-  const LIVE_INTERVAL =
-    5000;
-
-
-  /*
-    Conversa aberta:
-    a cada 3 segundos.
-  */
-
-  const CONVERSATION_INTERVAL =
-    3000;
-
-
-  let conversations = [];
-
-  let selectedConversation = null;
-
-  let currentFilter =
-    "all";
-
-  let conversationTimer =
-    null;
-
-  let liveTimer =
-    null;
-
-  let loadingConversation =
-    false;
-
-
-  /* =====================================================
-     ELEMENTOS
-  ===================================================== */
-
-  const listElement =
-    document.getElementById(
-      "conversationList"
-    );
-
-
-  const emptyState =
-    document.getElementById(
-      "emptyState"
-    );
-
-
-  const chatPanel =
-    document.getElementById(
-      "chatPanel"
-    );
-
-
-  const messagesElement =
-    document.getElementById(
-      "messages"
-    );
-
-
-  const searchInput =
-    document.getElementById(
-      "searchInput"
-    );
-
-  const replyInput = document.getElementById("replyInput");
-  const composerStatus = document.getElementById("composerStatus");
-  const generateDraftButton = document.getElementById("generateDraftButton");
-  const sendReplyButton = document.getElementById("sendReplyButton");
-
-
-  /* =====================================================
-     UTILIDADES
-  ===================================================== */
-
-  function escapeHtml(value) {
-
-    return String(
-      value ?? ""
-    )
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-
-  }
-
-
-  function formatDate(value) {
-
-    if (!value) {
-      return "";
-    }
-
-
-    const date =
-      new Date(value);
-
-
-    if (
-      Number.isNaN(
-        date.getTime()
-      )
-    ) {
-      return "";
-    }
-
-
-    return date.toLocaleString(
-      "pt-BR",
-      {
-        day:
-          "2-digit",
-
-        month:
-          "2-digit",
-
-        hour:
-          "2-digit",
-
-        minute:
-          "2-digit"
-      }
-    );
-
-  }
-
-
-  function formatClock() {
-
-    return new Date()
-      .toLocaleTimeString(
-        "pt-BR",
-        {
-          hour:
-            "2-digit",
-
-          minute:
-            "2-digit",
-
-          second:
-            "2-digit"
-        }
-      );
-
-  }
-
-
-  function directionOf(message) {
-
-    const direction =
-      String(
-        message.direction ||
-        ""
-      )
-      .toLowerCase();
-
-
-    if (
-      direction ===
-      "outbound"
-    ) {
-
-      return "outbound";
-
-    }
-
-
-    return "inbound";
-
-  }
-
-
-  function messageText(message) {
-
-    return (
-      message.content ||
-      message.text ||
-      message.message ||
-      message.body ||
-      ""
-    );
-
-  }
-
-
-  function messageDate(message) {
-
-    return (
-      message.date_created ||
-      message.created_at ||
-      message.timestamp ||
-      ""
-    );
-
-  }
-
-
-  function messageAuthor(message) {
-
-    const direction =
-      directionOf(message);
-
-
-    if (
-      direction ===
-      "outbound"
-    ) {
-
-      if (
-        message.sender_role === "human" ||
-        message.metadata?.sender_role === "human" ||
-        message.metadata?.manual === true
-      ) {
-
-        return "Atendente";
-
-      }
-
-
-      return "Matrix AI";
-
-    }
-
-
-    return "Cliente";
-
-  }
-
-
-  function mediaType(message) {
-
-    const type =
-      message.media_type ||
-      message.metadata?.media_type ||
-      message.metadata?.type ||
-      null;
-
-    const normalized = String(type || "").trim().toLowerCase();
-
-    if (!normalized || normalized === "text") {
-      return null;
-    }
-
-    return normalized;
-
-  }
-
-
-  /* =====================================================
-     CARREGAR FILA
-  ===================================================== */
-
-  async function loadCentral() {
-
-    const button =
-      document.getElementById(
-        "refreshButton"
-      );
-
-
-    try {
-
-      button.textContent =
-        "⟳";
-
-
-      const response =
-        await fetch(
-          LIVE_ENDPOINT,
-          {
-            cache:
-              "no-store"
-          }
-        );
-
-
-      const data =
-        await response.json();
-
-
-      if (
-        !response.ok ||
-        !data.sucesso
-      ) {
-
-        throw new Error(
-          data.mensagem ||
-          "Não foi possível carregar a Central SAC."
-        );
-
-      }
-
-
-      conversations =
-        data.conversas || [];
-
-
-      updateStats();
-
-      renderConversationList();
-
-
-      document.getElementById(
-        "lastUpdate"
-      ).textContent =
-        "Atualizado " +
-        formatClock();
-
-
-      /*
-        Mantém os dados básicos
-        da conversa selecionada atualizados.
-      */
-
-      if (
-        selectedConversation
-      ) {
-
-        const updated =
-          conversations.find(
-            item =>
-              String(item.id) ===
-              String(
-                selectedConversation.id
-              )
-          );
-
-
-        if (updated) {
-
-          selectedConversation = {
-            ...selectedConversation,
-            ...updated
-          };
-
-
-          renderChatHeader();
-
-        }
-
-      }
-
-    }
-
-    catch (error) {
-
-      console.error(
-        "Erro carregando central:",
-        error
-      );
-
-
-      listElement.innerHTML = `
-
-        <div class="error">
-
-          Erro ao carregar SAC:
-
-          <br><br>
-
-          ${escapeHtml(
-            error.message
-          )}
-
-        </div>
-
-      `;
-
-    }
-
-    finally {
-
-      button.textContent =
-        "↻";
-
-    }
-
-  }
-
-
-  /* =====================================================
-     ESTATÍSTICAS
-  ===================================================== */
-
-  function updateStats() {
-
-    const total =
-      conversations.length;
-
-
-    const review =
-      conversations.filter(
-        item =>
-          item.requires_review ===
-          true
-      ).length;
-
-
-    const unread =
-      conversations.reduce(
-        (sum, item) => {
-
-          return (
-            sum +
-            Number(
-              item.unread_count ||
-              0
-            )
-          );
-
-        },
-        0
-      );
-
-
-    document.getElementById(
-      "totalCount"
-    ).textContent =
-      total;
-
-
-    document.getElementById(
-      "reviewCount"
-    ).textContent =
-      review;
-
-
-    document.getElementById(
-      "unreadCount"
-    ).textContent =
-      unread;
-
-  }
-
-
-  /* =====================================================
-     FILTROS
-  ===================================================== */
-
-  function filteredConversations() {
-
-    const search =
-      searchInput.value
-        .trim()
-        .toLowerCase();
-
-
-    return conversations.filter(
-      item => {
-
-
-        if (
-          currentFilter ===
-          "review" &&
-          !item.requires_review
-        ) {
-
-          return false;
-
-        }
-
-
-        if (
-          currentFilter ===
-          "whatsapp" &&
-          item.channel !==
-          "whatsapp"
-        ) {
-
-          return false;
-
-        }
-
-
-        if (!search) {
-
-          return true;
-
-        }
-
-
-        const text = [
-
-          item.contact_name,
-
-          item.external_user_id,
-
-          item.last_message,
-
-          item.channel
-
-        ]
-          .join(" ")
-          .toLowerCase();
-
-
-        return text.includes(
-          search
-        );
-
-      }
-    );
-
-  }
-
-
-  /* =====================================================
-     LISTA
-  ===================================================== */
-
-  function renderConversationList() {
-
-    const items =
-      filteredConversations();
-
-
-    if (
-      !items.length
-    ) {
-
-      listElement.innerHTML = `
-
-        <div class="loading">
-          Nenhum atendimento encontrado.
-        </div>
-
-      `;
-
-
-      return;
-
-    }
-
-
-    listElement.innerHTML =
-      items
-        .map(
-          item => {
-
-
-            const active =
-              selectedConversation &&
-              String(
-                selectedConversation.id
-              ) ===
-              String(item.id);
-
-
-            const whatsapp =
-              item.channel ===
-              "whatsapp";
-
-
-            let badges =
-              "";
-
-
-            if (
-              item.control_mode ===
-              "human"
-            ) {
-
-              badges += `
-
-                <span
-                  class="badge badge-human"
-                >
-                  HUMANO
-                </span>
-
-              `;
-
-            }
-
-            else {
-
-              badges += `
-
-                <span
-                  class="badge badge-ai"
-                >
-                  IA
-                </span>
-
-              `;
-
-            }
-
-
-            if (
-              item.requires_review
-            ) {
-
-              badges += `
-
-                <span
-                  class="badge badge-review"
-                >
-                  REVISAR
-                </span>
-
-              `;
-
-            }
-
-
-            if (
-              Number(
-                item.open_audits ||
-                0
-              ) > 0
-            ) {
-
-              badges += `
-
-                <span
-                  class="badge badge-danger"
-                >
-                  ALERTA
-                </span>
-
-              `;
-
-            }
-
-
-            if (
-              Number(
-                item.unread_count ||
-                0
-              ) > 0
-            ) {
-
-              badges += `
-
-                <span
-                  class="badge badge-unread"
-                >
-                  ${
-                    Number(
-                      item.unread_count
-                    )
-                  } nova(s)
-                </span>
-
-              `;
-
-            }
-
-
-            return `
-
-              <div
-
-                class="conversation ${
-                  active
-                    ? "active"
-                    : ""
-                }"
-
-                data-id="${
-                  escapeHtml(
-                    item.id
-                  )
-                }"
-
-              >
-
-                <div class="conversation-top">
-
-                  <div class="contact-name">
-
-                    ${
-                      escapeHtml(
-                        item.contact_name ||
-                        item.external_user_id ||
-                        "Cliente"
-                      )
-                    }
-
-                  </div>
-
-                  <div class="time">
-
-                    ${
-                      formatDate(
-                        item.last_message_at
-                      )
-                    }
-
-                  </div>
-
-                </div>
-
-
-                <span
-                  class="channel ${
-                    whatsapp
-                      ? "whatsapp"
-                      : ""
-                  }"
-                >
-
-                  ${
-                    escapeHtml(
-                      item.channel ||
-                      "SAC"
-                    )
-                  }
-
-                </span>
-
-
-                <div class="last-message">
-
-                  ${
-                    escapeHtml(
-                      item.last_message ||
-                      "Sem mensagem"
-                    )
-                  }
-
-                </div>
-
-
-                <div class="conversation-footer">
-
-                  ${badges}
-
-                </div>
-
-              </div>
-
-            `;
-
-          }
-        )
-        .join("");
-
-
-    document
-      .querySelectorAll(
-        ".conversation"
-      )
-      .forEach(
-        element => {
-
-
-          element.addEventListener(
-            "click",
-            () => {
-
-
-              selectConversation(
-                element.dataset.id
-              );
-
-
-            }
-          );
-
-        }
-      );
-
-  }
-
-
-  /* =====================================================
-     SELECIONAR CONVERSA
-  ===================================================== */
-
-  async function selectConversation(id) {
-
-    const conversation =
-      conversations.find(
-        item =>
-          String(item.id) ===
-          String(id)
-      );
-
-
-    if (
-      !conversation
-    ) {
-
-      return;
-
-    }
-
-
-    selectedConversation =
-      conversation;
-
-
-    emptyState.style.display =
-      "none";
-
-
-    chatPanel.style.display =
-      "flex";
-
-
-    renderConversationList();
-
-    renderChatHeader();
-
-    updateComposerState();
-
-
-    /*
-      Cancela qualquer polling anterior.
-    */
-
-    stopConversationPolling();
-
-
-    /*
-      Busca histórico completo agora.
-    */
-
-    await loadSelectedConversation(
-      true
-    );
-
-
-    /*
-      Depois começa atualização automática.
-    */
-
-    startConversationPolling();
-
-  }
-
-
-  /* =====================================================
-     CABEÇALHO
-  ===================================================== */
-
-  function renderChatHeader() {
-
-    if (
-      !selectedConversation
-    ) {
-
-      return;
-
-    }
-
-
-    document.getElementById(
-      "chatName"
-    ).textContent =
-
-      selectedConversation.contact_name ||
-
-      selectedConversation.external_user_id ||
-
-      "Cliente";
-
-
-    document.getElementById(
-      "chatInfo"
-    ).textContent =
-
-      [
-
-        selectedConversation.channel,
-
-        selectedConversation.external_user_id,
-
-        selectedConversation.status
-
-      ]
-        .filter(Boolean)
-        .join(" • ");
-
-
-    document.getElementById(
-      "controlMode"
-    ).textContent =
-
-      selectedConversation.control_mode ===
-      "human"
-
-        ? "HUMANO"
-
-        : "IA";
-
-
-    let badges =
-      "";
-
-
-    if (
-      selectedConversation.requires_review
-    ) {
-
-      badges += `
-
-        <span
-          class="badge badge-review"
-        >
-          ⚠ REQUER REVISÃO
-        </span>
-
-      `;
-
-    }
-
-
-    if (
-      selectedConversation.attention_level ===
-      "urgent"
-    ) {
-
-      badges += `
-
-        <span
-          class="badge badge-danger"
-        >
-          URGENTE
-        </span>
-
-      `;
-
-    }
-
-
-    document.getElementById(
-      "chatBadges"
-    ).innerHTML =
-      badges;
-
-  }
-
-
-  /* =====================================================
-     CARREGAR HISTÓRICO COMPLETO
-  ===================================================== */
-
-  async function loadSelectedConversation(
-    showLoading = false
-  ) {
-
-    if (
-      !selectedConversation ||
-      loadingConversation
-    ) {
-
-      return;
-
-    }
-
-
-    const conversationId =
-      selectedConversation.id;
-
-
-    loadingConversation =
-      true;
-
-
-    /*
-      Descobre se usuário estava
-      perto do final da conversa.
-    */
-
-    const distanceFromBottom =
-
-      messagesElement.scrollHeight -
-
-      messagesElement.scrollTop -
-
-      messagesElement.clientHeight;
-
-
-    const wasNearBottom =
-      distanceFromBottom <
-      120;
-
-
-    try {
-
-      if (
-        showLoading
-      ) {
-
-        messagesElement.innerHTML = `
-
-          <div class="loading">
-            Carregando conversa completa...
-          </div>
-
-        `;
-
-      }
-
-
-      const response =
-        await fetch(
-
-          `${CONVERSATION_ENDPOINT}/${conversationId}?limit=500`,
-
-          {
-            cache:
-              "no-store"
-          }
-
-        );
-
-
-      const data =
-        await response.json();
-
-
-      if (
-        !response.ok ||
-        !data.sucesso
-      ) {
-
-        throw new Error(
-
-          data.mensagem ||
-
-          "Erro ao carregar conversa."
-
-        );
-
-      }
-
-
-      /*
-        Confere se usuário não mudou
-        para outra conversa durante
-        o fetch.
-      */
-
-      if (
-        !selectedConversation ||
-        String(
-          selectedConversation.id
-        ) !==
-        String(
-          conversationId
-        )
-      ) {
-
-        return;
-
-      }
-
-
-      selectedConversation = {
-
-        ...selectedConversation,
-
-        ...(data.conversa || {}),
-
-        mensagens:
-          data.mensagens || [],
-
-        auditorias:
-          data.auditorias || [],
-
-        eventos_controle:
-          data.eventos_controle || [],
-
-        correcoes:
-          data.correcoes || []
-
-      };
-
-
-      renderChatHeader();
-
-
-      renderMessages(
-        wasNearBottom ||
-        showLoading
-      );
-
-
-      document.getElementById(
-        "monitorStatus"
-      ).textContent =
-
-        "● Atualizado " +
-        formatClock();
-
-    }
-
-    catch (error) {
-
-      console.error(
-        "Erro carregando conversa:",
-        error
-      );
-
-
-      messagesElement.innerHTML = `
-
-        <div class="error">
-
-          Não foi possível carregar
-          o histórico completo.
-
-          <br><br>
-
-          ${
-            escapeHtml(
-              error.message
-            )
-          }
-
-        </div>
-
-      `;
-
-
-      document.getElementById(
-        "monitorStatus"
-      ).textContent =
-        "⚠ Erro na atualização";
-
-    }
-
-    finally {
-
-      loadingConversation =
-        false;
-
-    }
-
-  }
-
-
-  /* =====================================================
-     RENDERIZAR MENSAGENS
-  ===================================================== */
-
-  function renderMessages(
-    scrollToBottom = false
-  ) {
-
-    if (
-      !selectedConversation
-    ) {
-
-      return;
-
-    }
-
-
-    const messages =
-      selectedConversation.mensagens ||
-      [];
-
-
-    if (
-      !messages.length
-    ) {
-
-      messagesElement.innerHTML = `
-
-        <div class="loading">
-          Ainda não existem mensagens
-          registradas nesta conversa.
-        </div>
-
-      `;
-
-
-      return;
-
-    }
-
-
-    messagesElement.innerHTML =
-
-      messages
-        .map(
-          message => {
-
-
-            const direction =
-              directionOf(
-                message
-              );
-
-
-            const text =
-              messageText(
-                message
-              );
-
-
-            const date =
-              messageDate(
-                message
-              );
-
-
-            const author =
-              messageAuthor(
-                message
-              );
-
-
-            const type =
-              mediaType(
-                message
-              );
-
-
-            let media =
-              "";
-
-
-            if (
-              type
-            ) {
-
-              media = `
-
-                <span class="media-label">
-
-                  ${
-                    escapeHtml(
-                      String(type)
-                        .toUpperCase()
-                    )
-                  }
-
-                </span>
-
-                <br>
-
-              `;
-
-            }
-
-
-            return `
-
-              <div
-                class="message-row ${
-                  direction
-                }"
-              >
-
-                <div class="bubble">
-
-                  <span
-                    class="message-author"
-                  >
-                    ${
-                      escapeHtml(
-                        author
-                      )
-                    }
-                  </span>
-
-                  ${media}
-
-                  ${
-                    escapeHtml(
-                      text ||
-                      "[Mensagem sem texto]"
-                    )
-                  }
-
-                  <span
-                    class="message-meta"
-                  >
-
-                    ${
-                      formatDate(
-                        date
-                      )
-                    }
-
-                  </span>
-
-                </div>
-
-              </div>
-
-            `;
-
-          }
-        )
-        .join("");
-
-
-    if (
-      scrollToBottom
-    ) {
-
-      messagesElement.scrollTop =
-        messagesElement.scrollHeight;
-
-    }
-
-  }
-
-
-  /* =====================================================
-     ENVIO MANUAL / RASCUNHO IA
-  ===================================================== */
-
-  function setComposerStatus(text, type = "") {
-    composerStatus.textContent = text;
-    composerStatus.className = "composer-status" + (type ? ` ${type}` : "");
-  }
-
-  function updateComposerState() {
-    const whatsapp = selectedConversation && String(selectedConversation.channel || "").toLowerCase() === "whatsapp";
-    replyInput.disabled = !whatsapp;
-    generateDraftButton.disabled = !whatsapp;
-    sendReplyButton.disabled = !whatsapp;
-
-    if (!selectedConversation) {
-      setComposerStatus("Selecione uma conversa.");
-      return;
-    }
-    if (!whatsapp) {
-      setComposerStatus("Envio manual disponível apenas para WhatsApp.");
-      return;
-    }
-    setComposerStatus("Pronto para responder.");
-  }
-
-  async function generateDraft() {
-    if (!selectedConversation) return;
-    generateDraftButton.disabled = true;
-    sendReplyButton.disabled = true;
-    const original = generateDraftButton.textContent;
-    generateDraftButton.textContent = "Gerando...";
-    setComposerStatus("Gerando resposta com IA...");
-
-    try {
-      const response = await fetch("/whatsapp/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: selectedConversation.id })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.sucesso) throw new Error(data.mensagem || "Não foi possível gerar a resposta.");
-      replyInput.value = String(data.draft || "").trim();
-      replyInput.focus();
-      setComposerStatus("Rascunho gerado. Revise antes de enviar.", "ok");
-    } catch (error) {
-      console.error("Erro gerando rascunho:", error);
-      setComposerStatus(error.message || "Erro ao gerar rascunho.", "error");
-    } finally {
-      generateDraftButton.textContent = original;
-      updateComposerState();
-    }
-  }
-
-  async function sendReply() {
-    if (!selectedConversation) return;
-    const text = replyInput.value.trim();
-    if (!text) {
-      setComposerStatus("Digite uma mensagem antes de enviar.", "error");
-      replyInput.focus();
-      return;
-    }
-
-    const to = String(selectedConversation.external_user_id || "").trim();
-    if (!to) {
-      setComposerStatus("Número do cliente não encontrado.", "error");
-      return;
-    }
-
-    generateDraftButton.disabled = true;
-    sendReplyButton.disabled = true;
-    const original = sendReplyButton.textContent;
-    sendReplyButton.textContent = "Enviando...";
-    setComposerStatus("Enviando mensagem...");
-
-    try {
-      const response = await fetch("/whatsapp/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, message: text, conversation_id: selectedConversation.id })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.sucesso) throw new Error(data.mensagem || "Não foi possível enviar a mensagem.");
-      replyInput.value = "";
-      setComposerStatus("Mensagem enviada.", "ok");
-      await loadSelectedConversation(false);
-      messagesElement.scrollTop = messagesElement.scrollHeight;
-    } catch (error) {
-      console.error("Erro enviando mensagem:", error);
-      setComposerStatus(error.message || "Erro ao enviar mensagem.", "error");
-    } finally {
-      sendReplyButton.textContent = original;
-      updateComposerState();
-    }
-  }
-
-  /* =====================================================
-     POLLING DA CONVERSA
-  ===================================================== */
-
-  function startConversationPolling() {
-
-    stopConversationPolling();
-
-
-    conversationTimer =
-      setInterval(
-        () => {
-
-          loadSelectedConversation(
-            false
-          );
-
-        },
-
-        CONVERSATION_INTERVAL
-      );
-
-  }
-
-
-  function stopConversationPolling() {
-
-    if (
-      conversationTimer
-    ) {
-
-      clearInterval(
-        conversationTimer
-      );
-
-
-      conversationTimer =
-        null;
-
-    }
-
-  }
-
-
-  /* =====================================================
-     POLLING DA FILA
-  ===================================================== */
-
-  function startLivePolling() {
-
-    if (
-      liveTimer
-    ) {
-
-      clearInterval(
-        liveTimer
-      );
-
-    }
-
-
-    liveTimer =
-      setInterval(
-        loadCentral,
-        LIVE_INTERVAL
-      );
-
-  }
-
-
-  /* =====================================================
-     EVENTOS
-  ===================================================== */
-
-  searchInput.addEventListener(
-    "input",
-    renderConversationList
+const router = require("express").Router();
+const { env } = require("../config/env");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+
+const execFileAsync = promisify(execFile);
+
+const WHATSAPP_VERIFY_TOKEN = env.WHATSAPP_VERIFY_TOKEN;
+const WHATSAPP_ACCESS_TOKEN = env.WHATSAPP_ACCESS_TOKEN;
+const WHATSAPP_PHONE_NUMBER_ID = env.WHATSAPP_PHONE_NUMBER_ID;
+const WHATSAPP_API_VERSION =
+  env.WHATSAPP_API_VERSION ||
+  process.env.WHATSAPP_API_VERSION ||
+  "v26.0";
+
+const OPENAI_API_KEY =
+  env.OPENAI_API_KEY ||
+  process.env.OPENAI_API_KEY;
+
+const OPENAI_MODEL =
+  env.OPENAI_MODEL ||
+  process.env.OPENAI_MODEL ||
+  "gpt-5.6";
+
+
+const MAX_VIDEO_SECONDS =
+  Number(
+    env.MAX_VIDEO_SECONDS ||
+    process.env.MAX_VIDEO_SECONDS ||
+    60
   );
 
+const SUPABASE_URL =
+  env.SUPABASE_URL ||
+  process.env.SUPABASE_URL;
 
-  document
-    .querySelectorAll(
-      ".filter"
-    )
-    .forEach(
-      button => {
+const SUPABASE_SECRET_KEY =
+  env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const MATRIX_ADMIN_WHATSAPP =
+  env.MATRIX_ADMIN_WHATSAPP ||
+  process.env.MATRIX_ADMIN_WHATSAPP ||
+  "";
+
+const MATRIX_ADMIN_WHATSAPPS =
+  env.MATRIX_ADMIN_WHATSAPPS ||
+  process.env.MATRIX_ADMIN_WHATSAPPS ||
+  MATRIX_ADMIN_WHATSAPP ||
+  "";
+
+const MATRIX_FAMILY_WHATSAPPS =
+  env.MATRIX_FAMILY_WHATSAPPS ||
+  process.env.MATRIX_FAMILY_WHATSAPPS ||
+  "";
+
+function listaNumeros(valor) {
+  return String(valor || "")
+    .split(",")
+    .map(limparNumero)
+    .filter(Boolean);
+}
+
+function tipoDeUsuario(from) {
+  const numero = limparNumero(from);
+  if (listaNumeros(MATRIX_ADMIN_WHATSAPPS).includes(numero)) return "admin";
+  if (listaNumeros(MATRIX_FAMILY_WHATSAPPS).includes(numero)) return "family";
+  return "customer";
+}
 
 
-        if (
-          button.id ===
-          "refreshButton"
-        ) {
+function memoryOwnerKey(from) {
+  const numero = limparNumero(from);
+  const role = tipoDeUsuario(numero);
 
-          return;
+  if (role === "admin" || role === "family") {
+    return `whatsapp:${numero}`;
+  }
 
+  return null;
+}
+
+function pedidoNaturalDeMemoria(texto) {
+  const t = String(texto || "").trim();
+
+  const patterns = [
+    /^\s*(mia[,\s]*)?(lembra|lembre|guarda|guarde|grava|grave|anota|anote|salva|salve)\b/i,
+    /^\s*(mia[,\s]*)?pra voce lembrar\b/i,
+    /^\s*(mia[,\s]*)?quero que voce lembre\b/i
+  ];
+
+  return patterns.some(p => p.test(t));
+}
+
+function extrairMemoriaNatural(texto) {
+  return String(texto || "")
+    .replace(/^\s*mia[,\s]*/i, "")
+    .replace(/^\s*(lembra|lembre|guarda|guarde|grava|grave|anota|anote|salva|salve)\s*(a[ií]|que|isso|:|-)?\s*/i, "")
+    .replace(/^\s*(pra voce lembrar|quero que voce lembre)\s*(que|:|-)?\s*/i, "")
+    .trim();
+}
+
+async function salvarMemoriaPessoal({
+  ownerKey,
+  ownerRole,
+  content,
+  source = "whatsapp_explicit"
+}) {
+  if (!ownerKey || !content) return null;
+
+  let titulo = "Memória pessoal";
+  let conteudo = content;
+
+  if (OPENAI_API_KEY) {
+    try {
+      const response = await fetch(
+        "https://api.openai.com/v1/responses",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: OPENAI_MODEL,
+            instructions: `
+Transforme a informação em uma memória curta e fiel.
+Responda SOMENTE JSON válido:
+{"title":"título curto","content":"fato em uma frase"}
+Não invente, não generalize e não inclua informação que não esteja no texto.
+`,
+            input: content
+          })
         }
+      );
 
+      const data = await response.json();
 
-        button.addEventListener(
-          "click",
-          () => {
+      if (response.ok) {
+        const raw =
+          data.output_text ||
+          data?.output?.[0]?.content?.[0]?.text ||
+          "";
 
-
-            document
-              .querySelectorAll(
-                ".filter"
-              )
-              .forEach(
-                item => {
-
-                  if (
-                    item.id !==
-                    "refreshButton"
-                  ) {
-
-                    item.classList.remove(
-                      "active"
-                    );
-
-                  }
-
-                }
-              );
-
-
-            button.classList.add(
-              "active"
-            );
-
-
-            currentFilter =
-              button.dataset.filter;
-
-
-            renderConversationList();
-
-          }
-        );
-
-      }
-    );
-
-
-  document.getElementById(
-    "refreshButton"
-  )
-    .addEventListener(
-      "click",
-      async () => {
-
-        await loadCentral();
-
-
-        if (
-          selectedConversation
-        ) {
-
-          await loadSelectedConversation(
-            false
+        try {
+          const obj = JSON.parse(
+            raw.replace(/^```json\s*/i, "")
+              .replace(/```$/i, "")
+              .trim()
           );
 
+          if (obj.title && obj.content) {
+            titulo = String(obj.title);
+            conteudo = String(obj.content);
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  const gravada = await supabaseRest(
+    "matrix_personal_memory",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({
+        owner_key: ownerKey,
+        owner_role: ownerRole,
+        title: titulo,
+        content: conteudo,
+        memory_type: "explicit",
+        visibility: "owner",
+        active: true,
+        source
+      })
+    }
+  );
+
+  return Array.isArray(gravada) ? gravada[0] : null;
+}
+
+async function buscarMemoriaPessoal(ownerKey) {
+  if (!ownerKey) return [];
+
+  const data = await supabaseRest(
+    `matrix_personal_memory?owner_key=eq.${encodeURIComponent(ownerKey)}&active=eq.true&select=title,content,memory_type,created_at&order=created_at.desc&limit=80`
+  );
+
+  return Array.isArray(data) ? data : [];
+}
+
+async function buscarMemoriaCompartilhadaFamilia() {
+  const data = await supabaseRest(
+    "matrix_shared_memory?active=eq.true&select=title,content,category,created_at&order=created_at.desc&limit=80"
+  );
+
+  return Array.isArray(data) ? data : [];
+}
+
+const MIA_PROMPT = `
+Você é Mia, uma assistente de IA geral acessada pelo WhatsApp da família Shop Matrix.
+
+COMPORTAMENTO:
+- Converse naturalmente em português do Brasil.
+- Pode responder sobre qualquer assunto dentro de suas capacidades.
+- Use o histórico da conversa, a memória pessoal do usuário e a memória compartilhada quando forem relevantes.
+- Não invente lembranças. Se a memória não trouxer um fato, diga que não sabe ou peça para o usuário ensinar.
+- Não transforme conversa casual em memória automaticamente.
+- Quando o usuário pedir explicitamente para lembrar/gravar/anotar/salvar algo, o sistema trata isso como memória pessoal.
+- Somente administradores podem ensinar regras oficiais do SAC.
+- Não misture memória de uma pessoa com outra.
+- Não diga que é humana. Se perguntarem, diga que é uma assistente de IA.
+`;
+
+const BASE_PROMPT = `
+Você é a assistente de atendimento da Shop Matrix.
+Você é uma IA em tempo real: conversa naturalmente, usa memória do cliente,
+consulta conhecimento oficial da empresa e acumula experiência operacional.
+
+PRINCÍPIOS:
+- Responda em português do Brasil.
+- Seja educada, objetiva, natural e resolutiva.
+- Fale de forma simples com clientes leigos.
+- Não invente diagnóstico, produto, recurso, prazo, política, preço, garantia,
+  frete, estoque ou informação de pedido.
+- Use o histórico da conversa. Nunca repita um teste que o cliente já confirmou ter feito.
+- Em atendimento conversacional, nunca envie mais de 2 procedimentos/testes na mesma mensagem.
+- Faça perguntas curtas quando precisar de informação para decidir o próximo passo.
+- Não diga que é humana. Se perguntarem, diga que é a assistente virtual da Shop Matrix.
+- Não execute orientação elétrica perigosa e nunca mande abrir uma fonte de alimentação.
+- Conhecimento oficial fornecido abaixo tem prioridade sobre conhecimento genérico do modelo.
+- Experiências anteriores ajudam, mas não podem contradizer conhecimento oficial.
+`;
+
+function limparNumero(valor) {
+  return String(valor || "").replace(/\D/g, "");
+}
+
+function precisaSupabase() {
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+    throw new Error(
+      "SUPABASE_URL ou SUPABASE_SECRET_KEY não configurado."
+    );
+  }
+}
+
+async function supabaseRest(path, options = {}) {
+  precisaSupabase();
+
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/${path}`,
+    {
+      ...options,
+      headers: {
+        apikey: SUPABASE_SECRET_KEY,
+        Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    }
+  );
+
+  const text = await response.text();
+  let data = null;
+
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    console.error("Erro Supabase REST:", {
+      path,
+      status: response.status,
+      data
+    });
+
+    throw new Error(
+      data?.message ||
+      data?.hint ||
+      `Supabase recusou a operação (${response.status}).`
+    );
+  }
+
+  return data;
+}
+
+async function obterOuCriarConversa({
+  telefone,
+  nome
+}) {
+  const numero = limparNumero(telefone);
+
+  const existente = await supabaseRest(
+    `sac_conversations?channel=eq.whatsapp&external_user_id=eq.${encodeURIComponent(numero)}&select=id,external_user_id,contact_name,status,last_message_at&limit=1`
+  );
+
+  if (Array.isArray(existente) && existente[0]) {
+    const conversa = existente[0];
+
+    await supabaseRest(
+      `sac_conversations?id=eq.${conversa.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          Prefer: "return=minimal"
+        },
+        body: JSON.stringify({
+          contact_name: nome || conversa.contact_name || null,
+          last_message_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+      }
+    );
+
+    return conversa;
+  }
+
+  const criada = await supabaseRest(
+    "sac_conversations",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({
+        channel: "whatsapp",
+        external_user_id: numero,
+        contact_name: nome || null,
+        status: "open",
+        last_message_at: new Date().toISOString()
+      })
+    }
+  );
+
+  if (!Array.isArray(criada) || !criada[0]) {
+    throw new Error("Não foi possível criar a conversa.");
+  }
+
+  return criada[0];
+}
+
+async function mensagemJaProcessada(externalMessageId) {
+  if (!externalMessageId) {
+    return false;
+  }
+
+  const data = await supabaseRest(
+    `sac_messages?external_message_id=eq.${encodeURIComponent(externalMessageId)}&select=id&limit=1`
+  );
+
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function salvarMensagem({
+  conversationId,
+  direction,
+  role,
+  content,
+  externalMessageId = null,
+  metadata = {}
+}) {
+  return supabaseRest(
+    "sac_messages",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation,resolution=ignore-duplicates"
+      },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        direction,
+        role,
+        content,
+        external_message_id: externalMessageId,
+        metadata
+      })
+    }
+  );
+}
+
+async function buscarHistorico(conversationId) {
+  const data = await supabaseRest(
+    `sac_messages?conversation_id=eq.${conversationId}&select=role,content,created_at&order=created_at.desc&limit=16`
+  );
+
+  return (Array.isArray(data) ? data : [])
+    .reverse()
+    .map(item => ({
+      role: item.role,
+      content: item.content
+    }));
+}
+
+async function buscarConhecimentoOficial() {
+  const data = await supabaseRest(
+    "matrix_ai_knowledge?active=eq.true&approved=eq.true&select=category,title,content,priority&order=priority.desc&limit=100"
+  );
+
+  return Array.isArray(data) ? data : [];
+}
+
+async function buscarExperienciasResolvidas() {
+  const data = await supabaseRest(
+    "sac_learnings?status=eq.verified_by_outcome&select=title,content,confidence&order=created_at.desc&limit=12"
+  );
+
+  return Array.isArray(data) ? data : [];
+}
+
+function montarContexto({
+  historico,
+  conhecimento,
+  experiencias,
+  memoriaPessoal = [],
+  memoriaCompartilhada = []
+}) {
+  const regras = conhecimento.length
+    ? conhecimento
+        .map(
+          item =>
+            `- [${item.category}] ${item.title}: ${item.content}`
+        )
+        .join("\n")
+    : "- Nenhuma regra oficial cadastrada.";
+
+  const casos = experiencias.length
+    ? experiencias
+        .map(
+          item =>
+            `- ${item.title}: ${item.content}`
+        )
+        .join("\n")
+    : "- Nenhuma experiência resolvida cadastrada.";
+
+  const conversa = historico.length
+    ? historico
+        .map(
+          item =>
+            `${item.role === "assistant" ? "ATENDENTE" : "CLIENTE"}: ${item.content}`
+        )
+        .join("\n")
+    : "Sem histórico anterior.";
+
+  const memoriaUsuario = memoriaPessoal.length
+    ? memoriaPessoal
+        .map(item => `- ${item.title}: ${item.content}`)
+        .join("\n")
+    : "- Nenhuma memória pessoal disponível.";
+
+  const memoriaFamilia = memoriaCompartilhada.length
+    ? memoriaCompartilhada
+        .map(item => `- ${item.title}: ${item.content}`)
+        .join("\n")
+    : "- Nenhuma memória compartilhada disponível.";
+
+  return `
+CONHECIMENTO OFICIAL DA SHOP MATRIX:
+${regras}
+
+EXPERIÊNCIAS DE ATENDIMENTOS JÁ RESOLVIDOS:
+${casos}
+
+MEMÓRIA PESSOAL DO USUÁRIO:
+${memoriaUsuario}
+
+MEMÓRIA COMPARTILHADA:
+${memoriaFamilia}
+
+HISTÓRICO DESTA CONVERSA:
+${conversa}
+`;
+}
+
+async function gerarRespostaIA({
+  mensagem,
+  nomeCliente,
+  historico,
+  conhecimento,
+  experiencias,
+  memoriaPessoal = [],
+  memoriaCompartilhada = [],
+  userType = "customer"
+}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY não configurada.");
+  }
+
+  const contexto = montarContexto({
+    historico,
+    conhecimento,
+    experiencias,
+    memoriaPessoal,
+    memoriaCompartilhada
+  });
+
+  const input = `
+${contexto}
+
+NOME DO CLIENTE:
+${nomeCliente || "não informado"}
+
+NOVA MENSAGEM DO CLIENTE:
+${mensagem}
+
+Responda somente ao cliente. Não explique regras internas nem mencione banco de dados.
+`;
+
+  const response = await fetch(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions: userType === "customer" ? BASE_PROMPT : MIA_PROMPT,
+        input
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro OpenAI:", data);
+
+    throw new Error(
+      data?.error?.message ||
+      "OpenAI recusou a geração da resposta."
+    );
+  }
+
+  const outputText =
+    data.output_text ||
+    (Array.isArray(data.output)
+      ? data.output
+          .flatMap(item => item?.content || [])
+          .map(content => content?.text || "")
+          .filter(Boolean)
+          .join("\n")
+      : "");
+
+  if (!outputText || !outputText.trim()) {
+    throw new Error("OpenAI retornou resposta vazia.");
+  }
+
+  return outputText.trim();
+}
+
+async function enviarMensagemWhatsApp(
+  to,
+  message
+) {
+  if (
+    !WHATSAPP_ACCESS_TOKEN ||
+    !WHATSAPP_PHONE_NUMBER_ID
+  ) {
+    throw new Error(
+      "WHATSAPP_ACCESS_TOKEN ou WHATSAPP_PHONE_NUMBER_ID não configurado."
+    );
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization:
+          `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: limparNumero(to),
+        type: "text",
+        text: {
+          preview_url: false,
+          body: String(message)
         }
+      })
+    }
+  );
 
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro enviando WhatsApp:", data);
+
+    throw new Error(
+      data?.error?.message ||
+      "WhatsApp recusou o envio."
+    );
+  }
+
+  return data;
+}
+
+function pareceConfirmacaoDeResolucao(texto) {
+  const t = String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return [
+    "funcionou",
+    "resolveu",
+    "deu certo",
+    "agora ligou",
+    "voltou a funcionar",
+    "obrigado resolveu",
+    "obrigada resolveu"
+  ].some(frase => t.includes(frase));
+}
+
+async function gerarAprendizadoDoCaso({
+  historico
+}) {
+  if (!OPENAI_API_KEY || historico.length < 3) {
+    return null;
+  }
+
+  const conversa = historico
+    .map(
+      item =>
+        `${item.role === "assistant" ? "ATENDENTE" : "CLIENTE"}: ${item.content}`
+    )
+    .join("\n");
+
+  const response = await fetch(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions:
+          "Resuma um atendimento técnico resolvido em até 500 caracteres. Informe sintoma, procedimento que resolveu e qualquer condição relevante. Não invente nada.",
+        input: conversa
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return (
+    data.output_text ||
+    data?.output?.[0]?.content?.[0]?.text ||
+    ""
+  ).trim() || null;
+}
+
+async function salvarAprendizadoResolvido({
+  conversationId,
+  resumo
+}) {
+  if (!resumo) {
+    return;
+  }
+
+  await supabaseRest(
+    "sac_learnings",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=minimal"
+      },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        title: "Caso resolvido no WhatsApp",
+        content: resumo,
+        status: "verified_by_outcome",
+        confidence: 0.8,
+        source: "customer_resolution_confirmation"
+      })
+    }
+  );
+}
+
+function ehComandoDeTreinamento(
+  from,
+  texto
+) {
+  if (tipoDeUsuario(from) !== "admin") {
+    return false;
+  }
+
+  return /^\s*(aprenda|treinar|treine)\s*:/i.test(
+    String(texto || "")
+  );
+}
+
+function extrairRegraTreinamento(texto) {
+  return String(texto || "")
+    .replace(
+      /^\s*(aprenda|treinar|treine)\s*:\s*/i,
+      ""
+    )
+    .trim();
+}
+
+async function salvarConhecimentoOficial(
+  conteudo
+) {
+  const response = await fetch(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions: `
+Classifique uma regra operacional da Shop Matrix.
+Responda SOMENTE JSON válido com:
+{"category":"produto|procedimento|atendimento|politica|tecnico","title":"titulo curto","content":"regra clara e fiel"}
+Não invente nada e preserve o sentido da regra recebida.
+`,
+        input: conteudo
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  let estrutura = {
+    category: "atendimento",
+    title: "Regra ensinada pelo administrador",
+    content: conteudo
+  };
+
+  if (response.ok) {
+    const texto =
+      data.output_text ||
+      data?.output?.[0]?.content?.[0]?.text ||
+      "";
+
+    try {
+      const json = JSON.parse(
+        texto.replace(/^```json\s*/i, "")
+          .replace(/```$/i, "")
+          .trim()
+      );
+
+      if (
+        json.category &&
+        json.title &&
+        json.content
+      ) {
+        estrutura = json;
+      }
+    } catch {
+      // usa estrutura simples
+    }
+  }
+
+  const gravada = await supabaseRest(
+    "matrix_ai_knowledge",
+    {
+      method: "POST",
+      headers: {
+        Prefer: "return=representation"
+      },
+      body: JSON.stringify({
+        category: estrutura.category,
+        title: estrutura.title,
+        content: estrutura.content,
+        priority: 100,
+        active: true,
+        approved: true,
+        source: "admin_whatsapp"
+      })
+    }
+  );
+
+  return Array.isArray(gravada)
+    ? gravada[0]
+    : null;
+}
+
+
+
+function bufferParaDataUrl(buffer, mimeType) {
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+function extrairOutputText(data) {
+  return (
+    data?.output_text ||
+    (Array.isArray(data?.output)
+      ? data.output
+          .flatMap(item => item?.content || [])
+          .map(content => content?.text || "")
+          .filter(Boolean)
+          .join("\n")
+      : "")
+  ).trim();
+}
+
+async function analisarImagensOpenAI({
+  imagens,
+  prompt
+}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY não configurada.");
+  }
+
+  const conteudo = [
+    {
+      type: "input_text",
+      text:
+        prompt ||
+        "Analise cuidadosamente a imagem e descreva somente o que é realmente visível. Se não for possível confirmar algo, diga que não é possível confirmar pela imagem."
+    }
+  ];
+
+  for (const imagem of imagens || []) {
+    conteudo.push({
+      type: "input_image",
+      image_url: bufferParaDataUrl(
+        imagem.buffer,
+        imagem.mimeType || "image/jpeg"
+      ),
+      detail: "high"
+    });
+  }
+
+  const response = await fetch(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        input: [
+          {
+            role: "user",
+            content: conteudo
+          }
+        ]
+      })
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error("Erro analisando imagem:", data);
+    throw new Error(
+      data?.error?.message ||
+      "OpenAI recusou a análise da imagem."
+    );
+  }
+
+  const texto = extrairOutputText(data);
+
+  if (!texto) {
+    throw new Error(
+      "A análise visual retornou vazia."
+    );
+  }
+
+  return texto;
+}
+
+async function duracaoVideoSegundos(videoPath) {
+  try {
+    const { stdout } = await execFileAsync(
+      "ffprobe",
+      [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        videoPath
+      ],
+      {
+        timeout: 30000,
+        maxBuffer: 1024 * 1024
       }
     );
 
+    const n = Number(String(stdout).trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch (erro) {
+    console.warn(
+      "Não foi possível obter duração do vídeo:",
+      erro.message
+    );
+    return null;
+  }
+}
 
-  document.getElementById(
-    "reloadConversation"
-  )
-    .addEventListener(
-      "click",
-      () => {
+async function extrairFramesVideo({
+  videoPath,
+  tempDir,
+  maxFrames = 8
+}) {
+  const duracao =
+    await duracaoVideoSegundos(videoPath);
 
-        loadSelectedConversation(
-          false
+  const fps = duracao
+    ? Math.min(
+        1,
+        Math.max(
+          0.08,
+          maxFrames / duracao
+        )
+      )
+    : 0.25;
+
+  const pattern =
+    path.join(tempDir, "frame-%02d.jpg");
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-i", videoPath,
+      "-vf",
+      `fps=${fps},scale='min(1280,iw)':-2`,
+      "-frames:v",
+      String(maxFrames),
+      "-q:v", "3",
+      pattern
+    ],
+    {
+      timeout: 90000,
+      maxBuffer: 8 * 1024 * 1024
+    }
+  );
+
+  const nomes = fs
+    .readdirSync(tempDir)
+    .filter(nome =>
+      /^frame-\d+\.jpg$/i.test(nome)
+    )
+    .sort();
+
+  return nomes.map(nome => ({
+    buffer: fs.readFileSync(
+      path.join(tempDir, nome)
+    ),
+    mimeType: "image/jpeg"
+  }));
+}
+
+async function extrairAudioVideo({
+  videoPath,
+  tempDir
+}) {
+  const audioPath =
+    path.join(tempDir, "video-audio.mp3");
+
+  try {
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i", videoPath,
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        "-b:a", "64k",
+        audioPath
+      ],
+      {
+        timeout: 90000,
+        maxBuffer: 8 * 1024 * 1024
+      }
+    );
+
+    if (
+      fs.existsSync(audioPath) &&
+      fs.statSync(audioPath).size > 0
+    ) {
+      return {
+        buffer:
+          fs.readFileSync(audioPath),
+        mimeType: "audio/mpeg"
+      };
+    }
+  } catch (erro) {
+    console.warn(
+      "Vídeo sem áudio utilizável ou falha extraindo áudio:",
+      erro.message
+    );
+  }
+
+  return null;
+}
+
+async function analisarVideoWhatsApp({
+  buffer,
+  mimeType,
+  caption
+}) {
+  const tempDir =
+    fs.mkdtempSync(
+      path.join(
+        os.tmpdir(),
+        "matrix-video-"
+      )
+    );
+
+  const ext =
+    String(mimeType || "")
+      .toLowerCase()
+      .includes("3gpp")
+      ? "3gp"
+      : "mp4";
+
+  const videoPath =
+    path.join(tempDir, `video.${ext}`);
+
+  try {
+    fs.writeFileSync(
+      videoPath,
+      buffer
+    );
+
+    const duracao =
+      await duracaoVideoSegundos(
+        videoPath
+      );
+
+    if (
+      duracao &&
+      duracao > MAX_VIDEO_SECONDS
+    ) {
+      const erro = new Error(
+        `VIDEO_TOO_LONG:${Math.ceil(duracao)}`
+      );
+      erro.code = "VIDEO_TOO_LONG";
+      erro.duration = duracao;
+      throw erro;
+    }
+
+    const [
+      frames,
+      audio
+    ] = await Promise.all([
+      extrairFramesVideo({
+        videoPath,
+        tempDir,
+        maxFrames: 8
+      }),
+      extrairAudioVideo({
+        videoPath,
+        tempDir
+      })
+    ]);
+
+    let transcricao = "";
+
+    if (audio?.buffer) {
+      try {
+        transcricao =
+          await transcreverAudioOpenAI({
+            buffer: audio.buffer,
+            mimeType:
+              audio.mimeType
+          });
+      } catch (erro) {
+        console.warn(
+          "Falha transcrevendo áudio do vídeo:",
+          erro.message
         );
-
       }
+    }
+
+    let analiseVisual = "";
+
+    if (frames.length) {
+      analiseVisual =
+        await analisarImagensOpenAI({
+          imagens: frames,
+          prompt: `
+Você está analisando quadros representativos de um vídeo enviado ao SAC da Shop Matrix.
+Analise o que acontece visualmente ao longo dos quadros.
+Priorize informações técnicas úteis: computador, cabos, conectores, fonte, chave seletora de voltagem, LEDs, ventoinhas, tela/BIOS/Windows, mensagens de erro, ligação elétrica e ações feitas pelo cliente.
+Não invente continuidade entre quadros. Se algo não puder ser confirmado, diga isso.
+Legenda enviada pelo cliente: ${caption || "(sem legenda)"}
+Transcrição do áudio do vídeo: ${transcricao || "(sem áudio/transcrição)"}
+`
+        });
+    }
+
+    return {
+      transcricao,
+      analiseVisual,
+      frameCount: frames.length
+    };
+  } finally {
+    try {
+      fs.rmSync(
+        tempDir,
+        {
+          recursive: true,
+          force: true
+        }
+      );
+    } catch {}
+  }
+}
+
+async function obterUrlMidiaWhatsApp(mediaId) {
+  if (!mediaId) {
+    throw new Error("ID da mídia do WhatsApp ausente.");
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${mediaId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`
+      }
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data?.url) {
+    console.error("Erro obtendo URL da mídia:", data);
+    throw new Error(
+      data?.error?.message ||
+      "Não foi possível obter a URL do áudio."
     );
+  }
 
+  return {
+    url: data.url,
+    mimeType: data.mime_type || "audio/ogg"
+  };
+}
 
-  generateDraftButton.addEventListener("click", generateDraft);
-  sendReplyButton.addEventListener("click", sendReply);
-  replyInput.addEventListener("keydown", event => {
-    if (event.ctrlKey && event.key === "Enter") {
-      event.preventDefault();
-      sendReply();
+async function baixarMidiaWhatsApp(mediaId) {
+  const { url, mimeType } =
+    await obterUrlMidiaWhatsApp(mediaId);
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`
     }
   });
 
+  if (!response.ok) {
+    const texto = await response.text();
+    console.error(
+      "Erro baixando mídia do WhatsApp:",
+      texto
+    );
+    throw new Error(
+      "Não foi possível baixar o áudio do WhatsApp."
+    );
+  }
 
-  /*
-    Para de fazer polling
-    quando a página fica invisível.
+  const arrayBuffer = await response.arrayBuffer();
 
-    Volta automaticamente quando
-    usuário retorna à aba.
-  */
+  return {
+    buffer: Buffer.from(arrayBuffer),
+    mimeType
+  };
+}
 
-  document.addEventListener(
-    "visibilitychange",
-    () => {
+function extensaoAudioPorMime(mimeType) {
+  const mime = String(mimeType || "").toLowerCase();
 
-      if (
-        document.hidden
-      ) {
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("mpeg")) return "mp3";
+  if (mime.includes("mp4")) return "m4a";
+  if (mime.includes("wav")) return "wav";
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("aac")) return "aac";
+  if (mime.includes("amr")) return "amr";
 
-        stopConversationPolling();
+  return "ogg";
+}
 
-      }
+async function transcreverAudioOpenAI({
+  buffer,
+  mimeType
+}) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY não configurada.");
+  }
 
-      else {
+  const ext = extensaoAudioPorMime(mimeType);
 
-        loadCentral();
+  const form = new FormData();
+  const blob = new Blob(
+    [buffer],
+    { type: mimeType || "audio/ogg" }
+  );
 
+  form.append(
+    "file",
+    blob,
+    `audio.${ext}`
+  );
 
-        if (
-          selectedConversation
-        ) {
+  // whisper-1 é estável para transcrição e barato para áudios curtos.
+  form.append("model", "whisper-1");
+  form.append("language", "pt");
 
-          loadSelectedConversation(
-            false
-          );
-
-          startConversationPolling();
-
-        }
-
-      }
-
+  const response = await fetch(
+    "https://api.openai.com/v1/audio/transcriptions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      },
+      body: form
     }
   );
 
+  const data = await response.json();
 
-  /* =====================================================
-     INICIALIZAÇÃO
-  ===================================================== */
+  if (!response.ok) {
+    console.error(
+      "Erro transcrevendo áudio:",
+      data
+    );
 
-  async function init() {
+    throw new Error(
+      data?.error?.message ||
+      "OpenAI recusou a transcrição do áudio."
+    );
+  }
 
-    updateComposerState();
+  const texto =
+    data?.text ||
+    data?.transcript ||
+    "";
 
-    await loadCentral();
+  if (!String(texto).trim()) {
+    throw new Error(
+      "A transcrição do áudio veio vazia."
+    );
+  }
 
-    startLivePolling();
+  return String(texto).trim();
+}
 
+async function extrairTextoMensagemWhatsApp(message) {
+  if (!message) {
+    return {
+      text: null,
+      originalType: null,
+      metadata: {}
+    };
+  }
+
+  if (message.type === "text") {
+    return {
+      text: message?.text?.body || null,
+      originalType: "text",
+      metadata: {}
+    };
+  }
+
+  if (message.type === "button") {
+    return {
+      text: message?.button?.text || null,
+      originalType: "button",
+      metadata: {}
+    };
+  }
+
+  if (message.type === "interactive") {
+    return {
+      text:
+        message?.interactive?.button_reply?.title ||
+        message?.interactive?.list_reply?.title ||
+        null,
+      originalType: "interactive",
+      metadata: {}
+    };
   }
 
 
-  init();
+  if (message.type === "image") {
+    const mediaId = message?.image?.id;
+    const caption =
+      message?.image?.caption || "";
 
-</script>
+    if (!mediaId) {
+      throw new Error(
+        "Mensagem de imagem sem media ID."
+      );
+    }
 
-</body>
-</html>
+    const {
+      buffer,
+      mimeType
+    } = await baixarMidiaWhatsApp(
+      mediaId
+    );
+
+    const analise =
+      await analisarImagensOpenAI({
+        imagens: [
+          {
+            buffer,
+            mimeType:
+              mimeType ||
+              "image/jpeg"
+          }
+        ],
+        prompt: `
+Analise esta imagem enviada ao SAC da Shop Matrix.
+A imagem pode mostrar chave seletora 115/230 V, ligação elétrica, estabilizador/filtro de linha, placa-mãe, memória, cabos, conectores, etiqueta, BIOS, Windows ou mensagem de erro.
+Leia somente o que for realmente visível. Quando houver chave seletora de voltagem, identifique a posição apenas se estiver claramente visível; caso contrário peça foto mais nítida.
+Legenda/pergunta do cliente: ${caption || "(sem legenda)"}
+`
+      });
+
+    return {
+      text:
+        [
+          caption
+            ? `Mensagem/legenda do cliente: ${caption}`
+            : null,
+          `Análise visual da imagem: ${analise}`
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      originalType: "image",
+      metadata: {
+        image_media_id: mediaId,
+        image_mime_type:
+          mimeType || null,
+        image_caption:
+          caption || null,
+        image_analysis:
+          analise
+      }
+    };
+  }
+
+  if (message.type === "video") {
+    const mediaId =
+      message?.video?.id;
+    const caption =
+      message?.video?.caption ||
+      "";
+
+    if (!mediaId) {
+      throw new Error(
+        "Mensagem de vídeo sem media ID."
+      );
+    }
+
+    const {
+      buffer,
+      mimeType
+    } = await baixarMidiaWhatsApp(
+      mediaId
+    );
+
+    const resultado =
+      await analisarVideoWhatsApp({
+        buffer,
+        mimeType,
+        caption
+      });
+
+    return {
+      text:
+        [
+          caption
+            ? `Mensagem/legenda do cliente: ${caption}`
+            : null,
+          resultado.transcricao
+            ? `Transcrição do áudio do vídeo: ${resultado.transcricao}`
+            : null,
+          resultado.analiseVisual
+            ? `Análise visual do vídeo: ${resultado.analiseVisual}`
+            : null
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      originalType: "video",
+      metadata: {
+        video_media_id: mediaId,
+        video_mime_type:
+          mimeType || null,
+        video_caption:
+          caption || null,
+        video_transcription:
+          resultado.transcricao ||
+          null,
+        video_visual_analysis:
+          resultado.analiseVisual ||
+          null,
+        video_frames_analyzed:
+          resultado.frameCount || 0
+      }
+    };
+  }
+
+  if (message.type === "audio") {
+    const mediaId = message?.audio?.id;
+
+    if (!mediaId) {
+      throw new Error(
+        "Mensagem de áudio sem media ID."
+      );
+    }
+
+    const { buffer, mimeType } =
+      await baixarMidiaWhatsApp(mediaId);
+
+    const transcricao =
+      await transcreverAudioOpenAI({
+        buffer,
+        mimeType
+      });
+
+    return {
+      text: transcricao,
+      originalType: "audio",
+      metadata: {
+        audio_media_id: mediaId,
+        audio_mime_type: mimeType,
+        audio_voice:
+          Boolean(message?.audio?.voice)
+      }
+    };
+  }
+
+  return {
+    text: null,
+    originalType: message.type || null,
+    metadata: {}
+  };
+}
+
+// Validação do webhook pela Meta
+router.get(
+  "/webhooks/whatsapp",
+  (req, res) => {
+    const mode = req.query["hub.mode"];
+    const token =
+      req.query["hub.verify_token"];
+    const challenge =
+      req.query["hub.challenge"];
+
+    if (
+      mode === "subscribe" &&
+      token &&
+      WHATSAPP_VERIFY_TOKEN &&
+      token === WHATSAPP_VERIFY_TOKEN
+    ) {
+      console.log(
+        "Webhook do WhatsApp verificado com sucesso."
+      );
+
+      return res.status(200).send(challenge);
+    }
+
+    console.warn(
+      "Falha na verificação do webhook do WhatsApp."
+    );
+
+    return res.sendStatus(403);
+  }
+);
+
+// Recebe mensagens e atualizações
+router.post(
+  "/webhooks/whatsapp",
+  async (req, res) => {
+    res.sendStatus(200);
+
+    try {
+      const body = req.body;
+
+      if (
+        body?.object !==
+        "whatsapp_business_account"
+      ) {
+        return;
+      }
+
+      for (const entry of body.entry || []) {
+        for (
+          const change of entry.changes || []
+        ) {
+          const value = change.value || {};
+
+          for (
+            const status of value.statuses || []
+          ) {
+            console.log("Status WhatsApp:", {
+              id: status.id,
+              status: status.status,
+              recipient_id: status.recipient_id,
+              timestamp: status.timestamp
+            });
+          }
+
+          for (
+            const message of value.messages || []
+          ) {
+            const contact =
+              Array.isArray(value.contacts) &&
+              value.contacts.length
+                ? value.contacts[0]
+                : null;
+
+            let parsedMessage;
+
+            try {
+              parsedMessage =
+                await extrairTextoMensagemWhatsApp(
+                  message
+                );
+            } catch (mediaError) {
+              console.error(
+                "Erro processando mídia do WhatsApp:",
+                mediaError
+              );
+
+              if (message?.from) {
+                try {
+                  const mensagemErro =
+                    mediaError?.code === "VIDEO_TOO_LONG"
+                      ? `Só consigo ler vídeos de até ${MAX_VIDEO_SECONDS} segundos. Por favor, envie um vídeo menor.`
+                      : message?.type === "audio"
+                        ? "Não consegui processar esse áudio agora. Pode enviar novamente ou escrever a mensagem em texto?"
+                        : message?.type === "image"
+                          ? "Não consegui analisar essa imagem agora. Pode enviar novamente, de preferência mais nítida?"
+                          : message?.type === "video"
+                            ? "Não consegui processar esse vídeo agora. Pode enviar novamente ou mandar um vídeo menor?"
+                            : "Não consegui processar essa mídia agora. Pode enviar novamente?";
+
+                  await enviarMensagemWhatsApp(
+                    message.from,
+                    mensagemErro
+                  );
+                } catch {}
+              }
+
+              continue;
+            }
+
+            const messageText =
+              parsedMessage?.text || null;
+
+            if (
+              !message.from ||
+              !messageText ||
+              ![
+                "text",
+                "button",
+                "interactive",
+                "audio",
+                "image",
+                "video"
+              ].includes(message.type)
+            ) {
+              continue;
+            }
+
+            if (
+              await mensagemJaProcessada(
+                message.id
+              )
+            ) {
+              console.log(
+                "Mensagem duplicada ignorada:",
+                message.id
+              );
+
+              continue;
+            }
+
+            const userType = tipoDeUsuario(message.from);
+
+            const conversa =
+              await obterOuCriarConversa({
+                telefone: message.from,
+                nome:
+                  contact?.profile?.name ||
+                  null
+              });
+
+            await salvarMensagem({
+              conversationId: conversa.id,
+              direction: "inbound",
+              role: "user",
+              content: messageText,
+              externalMessageId: message.id,
+              metadata: {
+                type: message.type,
+                original_type:
+                  parsedMessage?.originalType ||
+                  message.type,
+                ...(parsedMessage?.metadata || {}),
+                contact_name:
+                  contact?.profile?.name ||
+                  null,
+                phone_number_id:
+                  value?.metadata
+                    ?.phone_number_id ||
+                  null
+              }
+            });
+
+            console.log(
+              "Mensagem WhatsApp recebida e memorizada:",
+              {
+                from: message.from,
+                conversation_id: conversa.id,
+                text: messageText,
+                original_type:
+                  parsedMessage?.originalType ||
+                  message.type
+              }
+            );
+
+            // TREINAMENTO AO VIVO PELO WHATSAPP DO ADMIN
+            if (
+              ehComandoDeTreinamento(
+                message.from,
+                messageText
+              )
+            ) {
+              const regra =
+                extrairRegraTreinamento(
+                  messageText
+                );
+
+              if (!regra) {
+                await enviarMensagemWhatsApp(
+                  message.from,
+                  "Escreva depois de APRENDA: a regra que deseja ensinar."
+                );
+                continue;
+              }
+
+              const conhecimento =
+                await salvarConhecimentoOficial(
+                  regra
+                );
+
+              const confirmacao =
+                conhecimento
+                  ? `Aprendido e gravado na memória da Shop Matrix: ${conhecimento.content}`
+                  : "Aprendido e gravado na memória da Shop Matrix.";
+
+              const envio =
+                await enviarMensagemWhatsApp(
+                  message.from,
+                  confirmacao
+                );
+
+              await salvarMensagem({
+                conversationId: conversa.id,
+                direction: "outbound",
+                role: "assistant",
+                content: confirmacao,
+                externalMessageId:
+                  envio?.messages?.[0]?.id ||
+                  null,
+                metadata: {
+                  training: true
+                }
+              });
+
+              continue;
+            }
+
+            // MEMÓRIA PESSOAL EXPLÍCITA - ADMIN E FAMÍLIA
+            if (
+              (userType === "admin" || userType === "family") &&
+              pedidoNaturalDeMemoria(messageText)
+            ) {
+              const ownerKey = memoryOwnerKey(message.from);
+              const memoria = extrairMemoriaNatural(messageText);
+
+              if (memoria) {
+                const gravada = await salvarMemoriaPessoal({
+                  ownerKey,
+                  ownerRole: userType,
+                  content: memoria
+                });
+
+                const confirmacao = gravada
+                  ? `Beleza. Gravei na sua memória: ${gravada.content}`
+                  : "Beleza. Gravei isso na sua memória.";
+
+                const envio = await enviarMensagemWhatsApp(
+                  message.from,
+                  confirmacao
+                );
+
+                await salvarMensagem({
+                  conversationId: conversa.id,
+                  direction: "outbound",
+                  role: "assistant",
+                  content: confirmacao,
+                  externalMessageId:
+                    envio?.messages?.[0]?.id || null,
+                  metadata: {
+                    personal_memory: true
+                  }
+                });
+
+                continue;
+              }
+            }
+
+            const historico =
+              await buscarHistorico(
+                conversa.id
+              );
+
+            // Se o próprio cliente confirmou que resolveu,
+            // transforma esse atendimento em experiência operacional.
+            if (
+              userType === "customer" &&
+              pareceConfirmacaoDeResolucao(
+                messageText
+              )
+            ) {
+              const resumo =
+                await gerarAprendizadoDoCaso({
+                  historico
+                });
+
+              await salvarAprendizadoResolvido({
+                conversationId: conversa.id,
+                resumo
+              });
+            }
+
+            const conhecimento =
+              userType === "customer"
+                ? await buscarConhecimentoOficial()
+                : [];
+
+            const experiencias =
+              userType === "customer"
+                ? await buscarExperienciasResolvidas()
+                : [];
+
+            const ownerKey = memoryOwnerKey(message.from);
+
+            const memoriaPessoal =
+              (userType === "admin" || userType === "family")
+                ? await buscarMemoriaPessoal(ownerKey)
+                : [];
+
+            const memoriaCompartilhada =
+              (userType === "admin" || userType === "family")
+                ? await buscarMemoriaCompartilhadaFamilia()
+                : [];
+
+            const respostaIA =
+              await gerarRespostaIA({
+                mensagem: messageText,
+                nomeCliente:
+                  contact?.profile?.name ||
+                  null,
+                historico,
+                conhecimento,
+                experiencias,
+                memoriaPessoal,
+                memoriaCompartilhada,
+                userType
+              });
+
+            const envio =
+              await enviarMensagemWhatsApp(
+                message.from,
+                respostaIA
+              );
+
+            await salvarMensagem({
+              conversationId: conversa.id,
+              direction: "outbound",
+              role: "assistant",
+              content: respostaIA,
+              externalMessageId:
+                envio?.messages?.[0]?.id ||
+                null,
+              metadata: {
+                ai_model: OPENAI_MODEL
+              }
+            });
+
+            console.log(
+              "Resposta IA enviada e memorizada:",
+              {
+                to: message.from,
+                conversation_id: conversa.id,
+                message_id:
+                  envio?.messages?.[0]?.id ||
+                  null
+              }
+            );
+          }
+        }
+      }
+    } catch (erro) {
+      console.error(
+        "Erro processando webhook do WhatsApp:",
+        erro
+      );
+    }
+  }
+);
+
+// Gera rascunho com IA para uma conversa do WhatsApp
+router.post(
+  "/whatsapp/draft",
+  async (req, res) => {
+    try {
+      const conversationId =
+        String(req.body?.conversation_id || "").trim();
+
+      if (!conversationId) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem:
+            "Informe 'conversation_id'."
+        });
+      }
+
+      const conversas =
+        await supabaseRest(
+          `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status&limit=1`
+        );
+
+      if (!Array.isArray(conversas) || !conversas[0]) {
+        return res.status(404).json({
+          sucesso: false,
+          mensagem:
+            "Conversa SAC não encontrada."
+        });
+      }
+
+      const conversa = conversas[0];
+
+      if (String(conversa.channel || "").toLowerCase() !== "whatsapp") {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem:
+            "Esta conversa não é do WhatsApp."
+        });
+      }
+
+      const historico =
+        await buscarHistorico(conversa.id);
+
+      const ultimaMensagemCliente =
+        [...historico]
+          .reverse()
+          .find(item => item.role !== "assistant");
+
+      const conhecimento =
+        await buscarConhecimentoOficial();
+
+      const experiencias =
+        await buscarExperienciasResolvidas();
+
+      const respostaIA =
+        await gerarRespostaIA({
+          mensagem:
+            ultimaMensagemCliente?.content ||
+            "Continue o atendimento com base no histórico.",
+          nomeCliente:
+            conversa.contact_name || null,
+          historico,
+          conhecimento,
+          experiencias,
+          userType: "customer"
+        });
+
+      return res.json({
+        sucesso: true,
+        draft: respostaIA
+      });
+    } catch (erro) {
+      console.error(
+        "Erro /whatsapp/draft:",
+        erro
+      );
+
+      return res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message ||
+          "Erro interno ao gerar rascunho."
+      });
+    }
+  }
+);
+
+
+// Envio manual pela Central SAC.
+// Mantém compatibilidade com chamadas antigas que enviam apenas "to" e "message".
+router.post(
+  "/whatsapp/send",
+  async (req, res) => {
+    try {
+      const {
+        to,
+        message,
+        conversation_id: conversationId
+      } = req.body || {};
+
+      if (!to || !message) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem:
+            "Informe 'to' e 'message'."
+        });
+      }
+
+      const texto = String(message).trim();
+
+      if (!texto) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem:
+            "A mensagem está vazia."
+        });
+      }
+
+      const data =
+        await enviarMensagemWhatsApp(
+          to,
+          texto
+        );
+
+      if (conversationId) {
+        await salvarMensagem({
+          conversationId: String(conversationId),
+          direction: "outbound",
+          role: "assistant",
+          content: texto,
+          externalMessageId:
+            data?.messages?.[0]?.id || null,
+          metadata: {
+            manual: true,
+            sender_role: "human",
+            source: "central_sac"
+          }
+        });
+      }
+
+      return res.json({
+        sucesso: true,
+        resposta: data
+      });
+    } catch (erro) {
+      console.error(
+        "Erro /whatsapp/send:",
+        erro
+      );
+
+      return res.status(500).json({
+        sucesso: false,
+        mensagem:
+          erro.message ||
+          "Erro interno ao enviar WhatsApp."
+      });
+    }
+  }
+);
+
+// Consulta simples da memória por número (útil para painel futuro)
+router.get(
+  "/whatsapp/memory/:phone",
+  async (req, res) => {
+    try {
+      const numero =
+        limparNumero(req.params.phone);
+
+      const conversas =
+        await supabaseRest(
+          `sac_conversations?channel=eq.whatsapp&external_user_id=eq.${encodeURIComponent(numero)}&select=id,contact_name,status,last_message_at&limit=1`
+        );
+
+      if (
+        !Array.isArray(conversas) ||
+        !conversas[0]
+      ) {
+        return res.json({
+          sucesso: true,
+          encontrado: false
+        });
+      }
+
+      const conversa = conversas[0];
+      const historico =
+        await buscarHistorico(
+          conversa.id
+        );
+
+      return res.json({
+        sucesso: true,
+        encontrado: true,
+        conversa,
+        historico
+      });
+    } catch (erro) {
+      return res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+module.exports = router;
