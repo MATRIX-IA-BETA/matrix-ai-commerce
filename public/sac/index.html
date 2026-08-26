@@ -15,7 +15,7 @@
 
     :root {
       --bg: #07101f;
-      --top: #081426;
+      --top: #081426;A
       --panel: #0d1728;
       --panel2: #111d31;
       --border: #22304a;
@@ -692,7 +692,328 @@
       .bubble { min-width: 0; max-width: 88%; }
     }
 
-  </style>
+  
+    /* =====================================================
+       MOBILE / TELEFONE
+       A mesma página vira app no celular.
+    ===================================================== */
+
+    .mobile-back {
+      display: none;
+    }
+
+    @media (max-width: 768px) {
+
+      html,
+      body {
+        height: 100%;
+        min-height: 100%;
+        overflow: hidden;
+      }
+
+      body {
+        width: 100%;
+        overscroll-behavior: none;
+      }
+
+      .topbar {
+        height: 58px;
+        padding: 0 12px;
+      }
+
+      .brand {
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .logo {
+        width: 38px;
+        height: 38px;
+        border-radius: 10px;
+        font-size: 18px;
+      }
+
+      .brand h1 {
+        font-size: 16px;
+        white-space: nowrap;
+      }
+
+      .brand small {
+        display: none;
+      }
+
+      .top-status {
+        gap: 8px;
+        font-size: 11px;
+      }
+
+      #lastUpdate {
+        display: none;
+      }
+
+      .online {
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .app {
+        height: calc(100dvh - 58px);
+        display: block;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .sidebar,
+      .main {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+
+      .sidebar {
+        display: flex;
+        z-index: 2;
+      }
+
+      .main {
+        display: none;
+        z-index: 3;
+        background: var(--bg);
+      }
+
+      body.mobile-chat-open .sidebar {
+        display: none;
+      }
+
+      body.mobile-chat-open .main {
+        display: block;
+      }
+
+      .stats {
+        padding: 10px;
+        gap: 7px;
+      }
+
+      .stat {
+        min-height: 54px;
+        padding: 8px 10px;
+      }
+
+      .stat strong {
+        margin-bottom: 2px;
+        font-size: 18px;
+      }
+
+      .stat span {
+        font-size: 10px;
+      }
+
+      .toolbar {
+        padding: 10px;
+      }
+
+      .search {
+        margin-bottom: 8px;
+        padding: 11px 12px;
+        font-size: 16px; /* evita zoom automático no iPhone */
+      }
+
+      .filters {
+        gap: 6px;
+      }
+
+      .filter {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      .conversation-list {
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .conversation {
+        padding: 13px 12px;
+      }
+
+      .conversation-name {
+        font-size: 15px;
+      }
+
+      .conversation-preview {
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      .chat {
+        height: 100%;
+        min-height: 0;
+      }
+
+      .chat-header {
+        min-height: 64px;
+        padding: 8px 10px;
+        gap: 8px;
+      }
+
+      .mobile-back {
+        display: inline-flex;
+        flex: 0 0 38px;
+        width: 38px;
+        height: 38px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #0b1729;
+        color: white;
+        font-size: 21px;
+      }
+
+      .chat-title {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .chat-title h2 {
+        font-size: 16px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .chat-title p {
+        font-size: 10px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .chat-state {
+        margin-top: 3px;
+      }
+
+      .header-actions {
+        flex: 0 0 auto;
+      }
+
+      .action-btn {
+        padding: 8px 9px;
+        font-size: 0;
+      }
+
+      .action-btn::after {
+        content: "↻";
+        font-size: 20px;
+      }
+
+      .messages {
+        padding: 12px 8px 18px;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .message-row {
+        margin: 7px 0;
+      }
+
+      .bubble {
+        min-width: 0;
+        max-width: 88%;
+        padding: 10px 11px;
+        border-radius: 12px;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+
+      .message-author {
+        font-size: 10px;
+        margin-bottom: 5px;
+      }
+
+      .message-meta {
+        font-size: 9px;
+        margin-top: 6px;
+      }
+
+      .conversation-bottom {
+        min-height: 34px;
+        padding: 7px 10px;
+        font-size: 10px;
+      }
+
+      .monitoring {
+        max-width: 50%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .composer {
+        padding: 8px;
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+      }
+
+      .composer textarea {
+        min-height: 58px;
+        max-height: 110px;
+        resize: none;
+        padding: 10px 11px;
+        font-size: 16px; /* evita zoom automático no iPhone */
+      }
+
+      .composer-actions {
+        gap: 7px;
+        margin-top: 7px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .composer-status {
+        grid-column: 1 / -1;
+        font-size: 10px;
+        min-height: 14px;
+      }
+
+      .composer-button {
+        width: 100%;
+        padding: 11px 7px;
+        font-size: 12px;
+      }
+
+      .composer-hint {
+        display: none;
+      }
+
+      .empty {
+        display: none !important;
+      }
+
+      .error-box {
+        margin: 10px;
+        font-size: 12px;
+      }
+    }
+
+    @media (max-width: 390px) {
+      .online {
+        font-size: 10px;
+      }
+
+      .brand h1 {
+        font-size: 15px;
+      }
+
+      .filter {
+        padding: 7px 8px;
+      }
+
+      .bubble {
+        max-width: 92%;
+      }
+    }
+
+</style>
 </head>
 
 <body>
@@ -851,6 +1172,16 @@
     >
 
       <div class="chat-header">
+
+        <button
+          id="mobileBackButton"
+          class="mobile-back"
+          type="button"
+          aria-label="Voltar para atendimentos"
+          title="Voltar"
+        >
+          ‹
+        </button>
 
         <div class="chat-title">
 
@@ -1013,6 +1344,7 @@
   const composerStatus = document.getElementById("composerStatus");
   const generateDraftButton = document.getElementById("generateDraftButton");
   const sendReplyButton = document.getElementById("sendReplyButton");
+  const mobileBackButton = document.getElementById("mobileBackButton");
 
 
   /* =====================================================
@@ -1746,6 +2078,17 @@
 
     chatPanel.style.display =
       "flex";
+
+
+    if (
+      window.matchMedia(
+        "(max-width: 768px)"
+      ).matches
+    ) {
+      document.body.classList.add(
+        "mobile-chat-open"
+      );
+    }
 
 
     renderConversationList();
@@ -2538,6 +2881,44 @@
       sendReply();
     }
   });
+
+
+
+  if (mobileBackButton) {
+
+    mobileBackButton.addEventListener(
+      "click",
+      () => {
+
+        document.body.classList.remove(
+          "mobile-chat-open"
+        );
+
+        /*
+          Não apaga a conversa selecionada.
+          Ao tocar nela novamente, o histórico já está carregado.
+        */
+
+      }
+    );
+
+  }
+
+
+  window.addEventListener(
+    "resize",
+    () => {
+
+      if (
+        window.innerWidth > 768
+      ) {
+        document.body.classList.remove(
+          "mobile-chat-open"
+        );
+      }
+
+    }
+  );
 
 
   /*
