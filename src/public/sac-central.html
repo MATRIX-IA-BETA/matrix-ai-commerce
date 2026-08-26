@@ -52,7 +52,7 @@ body.open .main{transform:translateX(0)}body.open .side{visibility:hidden}.back{
 <script>
 (()=>{
 const $=id=>document.getElementById(id);
-const S={rows:[],id:null,threadId:null,listSig:"",convSig:"",busy:false,sending:false};
+const S={rows:[],id:null,conversation:null,listSig:"",convSig:"",busy:false,sending:false};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt=v=>{if(!v)return"";const d=new Date(v);return isNaN(d)? "":d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})};
 const name=c=>c.contact_name||c.buyer_nickname||c.external_user_id||c.phone_number||"Cliente";
@@ -71,7 +71,7 @@ async function loadList(force=false){
 }
 async function openConv(id,manual=false){
  if(manual){S.id=id;S.convSig="";document.body.classList.add("open");renderList();$("msgs").innerHTML='<div class="empty">Carregando conversa...</div>'}
- const d=await get("/sac/central/conversation/"+encodeURIComponent(id)+"?limit=500");const m=d.mensagens||[];const latestWithThread=[...m].reverse().find(x=>x.thread_id);S.threadId=latestWithThread?.thread_id||null;$("reply").disabled=!S.threadId;$("send").disabled=!S.threadId;$("reply").placeholder=S.threadId?"Digite sua resposta...":"Esta conversa ainda não possui thread de envio vinculada.";const s=sig([d.conversa?.last_message_at,m.map(x=>[x.id,x.created_at,x.date_created,x.text,x.content,x.metadata])]);if(!manual&&s===S.convSig)return;S.convSig=s;
+ const d=await get("/sac/central/conversation/"+encodeURIComponent(id)+"?limit=500");const m=d.mensagens||[];const c0=d.conversa||{};S.conversation=c0;const to=String(c0.external_user_id||c0.phone_number||c0.phone||c0.whatsapp||"").replace(/\D/g,"");const canSend=String(c0.channel||"").toLowerCase()==="whatsapp"&&Boolean(to);$("reply").disabled=!canSend;$("send").disabled=!canSend;$("reply").placeholder=canSend?"Digite sua resposta...":"Conversa sem número de WhatsApp válido.";const s=sig([d.conversa?.last_message_at,m.map(x=>[x.id,x.created_at,x.date_created,x.text,x.content,x.metadata])]);if(!manual&&s===S.convSig)return;S.convSig=s;
  const c=d.conversa||{};$("who").textContent=name(c);$("meta").textContent=(c.channel||"canal")+" • "+(c.external_user_id||"")+" • "+(c.control_mode||"ai");
  const box=$("msgs"),near=box.scrollHeight-box.scrollTop-box.clientHeight<120,old=box.scrollTop;
  box.innerHTML=m.length?m.map(x=>{const out=x.direction==="outbound"||x.role==="assistant"||x.sender_role==="assistant";const a=x.transcription||x.image_analysis||x.video_analysis;return `<div class="bubble ${out?"out":"in"}"><div>${esc(x.text||x.content||"(mídia)")}</div>${a?`<div class="analysis">${esc(typeof a==="string"?a:JSON.stringify(a))}</div>`:""}<div class="meta">${out?"Matrix AI":"Cliente"} • ${esc(fmt(x.date_created||x.created_at))}</div></div>`}).join(""):'<div class="empty">Nenhuma mensagem registrada.</div>';
@@ -84,10 +84,22 @@ async function refresh(force=false){
 async function sendReply(){
  if(S.sending)return;
  const text=$("reply").value.trim();
- if(!text||!S.threadId)return;
- S.sending=true;$("send").disabled=true;$("send").textContent="Enviando...";
+ const c=S.conversation||{};
+ const row=(S.rows||[]).find(x=>String(x.id)===String(S.id))||{};
+ const to=String(
+   c.external_user_id||c.phone_number||c.phone||c.whatsapp||
+   row.external_user_id||row.phone_number||row.phone||row.whatsapp||""
+ ).replace(/\D/g,"");
+
+ if(!text){alert("Digite a mensagem.");return}
+ if(!S.id){alert("Selecione uma conversa.");return}
+ if(!to){alert("Não encontrei o número de WhatsApp desta conversa.");return}
+
+ S.sending=true;
+ $("send").disabled=true;
+ $("send").textContent="Enviando...";
  try{
-   await post("/sac/"+encodeURIComponent(S.threadId)+"/send",{text});
+   await post("/whatsapp/send",{to,message:text,conversation_id:S.id});
    $("reply").value="";
    S.convSig="";
    await openConv(S.id,false);
@@ -97,7 +109,7 @@ async function sendReply(){
  }finally{
    S.sending=false;
    $("send").textContent="Enviar";
-   $("send").disabled=!S.threadId;
+   $("send").disabled=false;
  }
 }
 $("send").onclick=sendReply;
