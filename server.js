@@ -1,4 +1,6 @@
 const express = require("express");
+const path = require("path");
+
 const { env } = require("./src/config/env");
 const { supabase } = require("./src/db/supabase");
 const { createAnalyticsRouter } = require("./src/routes/analytics");
@@ -6,6 +8,11 @@ const { createAnalyticsRouter } = require("./src/routes/analytics");
 const app = express();
 
 app.use(express.json({ limit: "2mb" }));
+
+// =========================================================
+// INTERFACES WEB
+// =========================================================
+app.use(express.static(path.join(__dirname, "public")));
 
 // =========================================================
 // ROTAS EXISTENTES
