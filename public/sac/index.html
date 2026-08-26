@@ -1,0 +1,1883 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Matrix AI | Central SAC</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #07101f;
+      --panel: #0d1728;
+      --panel2: #111d31;
+      --border: #22304a;
+      --text: #eef4ff;
+      --muted: #8fa1bd;
+      --green: #27d17f;
+      --yellow: #f7c948;
+      --red: #ff5c6c;
+      --blue: #4da3ff;
+      --purple: #9c7cff;
+    }
+
+    body {
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    /* =====================================================
+       TOPO
+    ===================================================== */
+
+    .topbar {
+      height: 68px;
+      background: #091426;
+      border-bottom: 1px solid var(--border);
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      padding: 0 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      background: linear-gradient(135deg, #4da3ff, #9c7cff);
+      font-weight: 900;
+      font-size: 20px;
+    }
+
+    .brand h1 {
+      font-size: 18px;
+      margin-bottom: 3px;
+    }
+
+    .brand small {
+      color: var(--muted);
+    }
+
+    .top-status {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .online {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .online-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--green);
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    /* =====================================================
+       LAYOUT
+    ===================================================== */
+
+    .app {
+      height: calc(100vh - 68px);
+
+      display: grid;
+      grid-template-columns: 390px 1fr;
+    }
+
+    /* =====================================================
+       COLUNA ESQUERDA
+    ===================================================== */
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: #091426;
+
+      display: flex;
+      flex-direction: column;
+
+      min-width: 0;
+    }
+
+    .stats {
+      padding: 15px;
+
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 20px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .toolbar {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .search {
+      width: 100%;
+      padding: 11px 13px;
+
+      border-radius: 9px;
+      border: 1px solid var(--border);
+
+      background: var(--panel);
+      color: white;
+
+      outline: none;
+      margin-bottom: 9px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 6px;
+    }
+
+    .filter {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+
+      padding: 7px 10px;
+      border-radius: 8px;
+    }
+
+    .filter.active {
+      background: #17345d;
+      color: white;
+      border-color: #2d67a8;
+    }
+
+    .refresh-btn {
+      margin-left: auto;
+    }
+
+    .conversation-list {
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .conversation {
+      padding: 14px;
+
+      border-bottom: 1px solid #17243a;
+
+      cursor: pointer;
+      transition: 0.15s;
+    }
+
+    .conversation:hover {
+      background: #101d31;
+    }
+
+    .conversation.active {
+      background: #13233b;
+      border-left: 4px solid var(--blue);
+      padding-left: 10px;
+    }
+
+    .conversation-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+
+      margin-bottom: 6px;
+    }
+
+    .contact-name {
+      font-weight: 700;
+      font-size: 14px;
+
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .time {
+      font-size: 11px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .channel {
+      display: inline-block;
+      font-size: 10px;
+      padding: 3px 7px;
+      border-radius: 20px;
+
+      background: #183355;
+      color: #8dc6ff;
+
+      margin-bottom: 6px;
+    }
+
+    .channel.whatsapp {
+      background: #11372b;
+      color: #5ee6a7;
+    }
+
+    .last-message {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .conversation-footer {
+      margin-top: 8px;
+
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 3px 7px;
+      border-radius: 20px;
+    }
+
+    .badge-ai {
+      background: #2c2254;
+      color: #c3b2ff;
+    }
+
+    .badge-human {
+      background: #173552;
+      color: #8ac7ff;
+    }
+
+    .badge-review {
+      background: #4b3712;
+      color: #ffd66e;
+    }
+
+    .badge-danger {
+      background: #481a24;
+      color: #ff8995;
+    }
+
+    .badge-open {
+      background: #123828;
+      color: #6ce5a6;
+    }
+
+    /* =====================================================
+       ÁREA PRINCIPAL
+    ===================================================== */
+
+    .main {
+      min-width: 0;
+
+      display: flex;
+      flex-direction: column;
+
+      background: #07101f;
+    }
+
+    .empty {
+      flex: 1;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .empty-inner {
+      max-width: 420px;
+    }
+
+    .empty-icon {
+      font-size: 55px;
+      margin-bottom: 18px;
+    }
+
+    .empty h2 {
+      color: white;
+      margin-bottom: 8px;
+    }
+
+    .chat {
+      height: 100%;
+
+      display: none;
+      flex-direction: column;
+    }
+
+    .chat-header {
+      min-height: 78px;
+
+      padding: 14px 20px;
+
+      border-bottom: 1px solid var(--border);
+      background: #091426;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .chat-title h2 {
+      font-size: 17px;
+      margin-bottom: 5px;
+    }
+
+    .chat-title p {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-btn {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: white;
+
+      padding: 9px 12px;
+      border-radius: 8px;
+    }
+
+    .action-btn:hover {
+      background: var(--panel2);
+    }
+
+    /* =====================================================
+       MENSAGENS
+    ===================================================== */
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+
+      padding: 22px;
+
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+
+    .message-row {
+      display: flex;
+    }
+
+    .message-row.inbound {
+      justify-content: flex-start;
+    }
+
+    .message-row.outbound {
+      justify-content: flex-end;
+    }
+
+    .bubble {
+      max-width: 72%;
+      padding: 12px 14px;
+
+      border-radius: 13px;
+      line-height: 1.45;
+
+      font-size: 14px;
+
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .inbound .bubble {
+      background: #132036;
+      border: 1px solid #1f3150;
+    }
+
+    .outbound .bubble {
+      background: #153b31;
+      border: 1px solid #245846;
+    }
+
+    .message-meta {
+      display: block;
+
+      margin-top: 7px;
+
+      font-size: 10px;
+      color: #8091aa;
+
+      text-align: right;
+    }
+
+    /* =====================================================
+       PAINEL INFERIOR
+    ===================================================== */
+
+    .composer {
+      padding: 14px 18px;
+
+      border-top: 1px solid var(--border);
+      background: #091426;
+    }
+
+    .ai-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      margin-bottom: 8px;
+
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .ai-label {
+      color: var(--purple);
+      font-weight: 700;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 86px;
+      max-height: 180px;
+
+      resize: vertical;
+
+      background: var(--panel);
+      color: white;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      padding: 12px;
+
+      outline: none;
+    }
+
+    .composer-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      margin-top: 9px;
+    }
+
+    .left-actions,
+    .right-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 8px;
+
+      padding: 10px 14px;
+
+      font-weight: 700;
+    }
+
+    .btn-secondary {
+      background: #1a2941;
+      color: white;
+    }
+
+    .btn-ai {
+      background: #493887;
+      color: white;
+    }
+
+    .btn-send {
+      background: var(--green);
+      color: #04160e;
+    }
+
+    /* =====================================================
+       LOADING / ERRO
+    ===================================================== */
+
+    .loading {
+      padding: 30px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .error {
+      margin: 12px;
+      padding: 12px;
+
+      background: #411923;
+      border: 1px solid #71303e;
+
+      border-radius: 8px;
+      color: #ff9eaa;
+
+      font-size: 12px;
+    }
+
+    /* =====================================================
+       RESPONSIVO
+    ===================================================== */
+
+    @media (max-width: 850px) {
+      .app {
+        grid-template-columns: 320px 1fr;
+      }
+
+      .stats {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- =====================================================
+       CABEÇALHO
+  ====================================================== -->
+
+  <header class="topbar">
+
+    <div class="brand">
+
+      <div class="logo">
+        M
+      </div>
+
+      <div>
+        <h1>Matrix AI — Central SAC</h1>
+        <small>Atendimento inteligente em tempo real</small>
+      </div>
+
+    </div>
+
+    <div class="top-status">
+
+      <span id="lastUpdate">
+        Aguardando dados...
+      </span>
+
+      <span class="online">
+        <span class="online-dot"></span>
+        SISTEMA ONLINE
+      </span>
+
+    </div>
+
+  </header>
+
+
+  <!-- =====================================================
+       APP
+  ====================================================== -->
+
+  <div class="app">
+
+    <!-- ===================================================
+         SIDEBAR
+    ==================================================== -->
+
+    <aside class="sidebar">
+
+      <div class="stats">
+
+        <div class="stat">
+          <strong id="totalCount">0</strong>
+          <span>Conversas</span>
+        </div>
+
+        <div class="stat">
+          <strong id="reviewCount">0</strong>
+          <span>Revisão</span>
+        </div>
+
+        <div class="stat">
+          <strong id="unreadCount">0</strong>
+          <span>Não lidas</span>
+        </div>
+
+      </div>
+
+
+      <div class="toolbar">
+
+        <input
+          id="searchInput"
+          class="search"
+          placeholder="Buscar cliente ou mensagem..."
+        />
+
+        <div class="filters">
+
+          <button
+            class="filter active"
+            data-filter="all"
+          >
+            Todos
+          </button>
+
+          <button
+            class="filter"
+            data-filter="review"
+          >
+            Revisão
+          </button>
+
+          <button
+            class="filter"
+            data-filter="whatsapp"
+          >
+            WhatsApp
+          </button>
+
+          <button
+            class="filter refresh-btn"
+            id="refreshButton"
+            title="Atualizar"
+          >
+            ↻
+          </button>
+
+        </div>
+
+      </div>
+
+
+      <div
+        id="conversationList"
+        class="conversation-list"
+      >
+
+        <div class="loading">
+          Carregando atendimentos...
+        </div>
+
+      </div>
+
+    </aside>
+
+
+    <!-- ===================================================
+         CONVERSA
+    ==================================================== -->
+
+    <main class="main">
+
+      <div
+        id="emptyState"
+        class="empty"
+      >
+
+        <div class="empty-inner">
+
+          <div class="empty-icon">
+            💬
+          </div>
+
+          <h2>Central SAC Matrix</h2>
+
+          <p>
+            Selecione um atendimento ao lado para acompanhar
+            em tempo real o que a IA está fazendo.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      <section
+        id="chatPanel"
+        class="chat"
+      >
+
+        <!-- CABEÇALHO DA CONVERSA -->
+
+        <div class="chat-header">
+
+          <div class="chat-title">
+
+            <h2 id="chatName">
+              Cliente
+            </h2>
+
+            <p id="chatInfo">
+              Atendimento
+            </p>
+
+          </div>
+
+          <div class="header-actions">
+
+            <button
+              class="action-btn"
+              id="reloadConversation"
+            >
+              ↻ Atualizar
+            </button>
+
+          </div>
+
+        </div>
+
+
+        <!-- MENSAGENS -->
+
+        <div
+          id="messages"
+          class="messages"
+        >
+        </div>
+
+
+        <!-- COMPOSER -->
+
+        <div class="composer">
+
+          <div class="ai-status">
+
+            <span>
+              Controle:
+              <strong
+                id="controlMode"
+                class="ai-label"
+              >
+                IA
+              </strong>
+            </span>
+
+            <span id="reviewStatus">
+            </span>
+
+          </div>
+
+
+          <textarea
+            id="replyText"
+            placeholder="Digite uma resposta manual ou gere um rascunho com a IA..."
+          ></textarea>
+
+
+          <div class="composer-actions">
+
+            <div class="left-actions">
+
+              <button
+                id="draftButton"
+                class="btn btn-ai"
+              >
+                ✨ Gerar resposta IA
+              </button>
+
+            </div>
+
+
+            <div class="right-actions">
+
+              <button
+                id="sendButton"
+                class="btn btn-send"
+              >
+                Enviar resposta
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </main>
+
+  </div>
+
+
+  <script>
+
+    // =====================================================
+    // CONFIGURAÇÃO
+    // =====================================================
+
+    const API_LIVE = "/sac/central/live";
+    const API_BASE = "/api";
+
+    let conversations = [];
+    let selectedConversation = null;
+    let currentFilter = "all";
+
+
+    // =====================================================
+    // ELEMENTOS
+    // =====================================================
+
+    const listElement =
+      document.getElementById("conversationList");
+
+    const emptyState =
+      document.getElementById("emptyState");
+
+    const chatPanel =
+      document.getElementById("chatPanel");
+
+    const messagesElement =
+      document.getElementById("messages");
+
+    const searchInput =
+      document.getElementById("searchInput");
+
+    const replyText =
+      document.getElementById("replyText");
+
+
+    // =====================================================
+    // UTILIDADES
+    // =====================================================
+
+    function escapeHtml(value) {
+
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+
+    function formatDate(value) {
+
+      if (!value) return "";
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        return "";
+      }
+
+      return date.toLocaleString(
+        "pt-BR",
+        {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit"
+        }
+      );
+    }
+
+
+    // =====================================================
+    // CARREGAR CENTRAL
+    // =====================================================
+
+    async function loadCentral() {
+
+      try {
+
+        document.getElementById(
+          "refreshButton"
+        ).textContent = "⟳";
+
+
+        const response =
+          await fetch(
+            API_LIVE,
+            {
+              cache: "no-store"
+            }
+          );
+
+
+        const data =
+          await response.json();
+
+
+        if (!response.ok || !data.sucesso) {
+
+          throw new Error(
+            data.mensagem ||
+            "Não foi possível carregar a central."
+          );
+
+        }
+
+
+        conversations =
+          data.conversas || [];
+
+
+        updateStats();
+
+        renderConversationList();
+
+
+        document.getElementById(
+          "lastUpdate"
+        ).textContent =
+          "Atualizado " +
+          new Date().toLocaleTimeString(
+            "pt-BR",
+            {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit"
+            }
+          );
+
+
+        /*
+          Se uma conversa estiver aberta,
+          atualizamos os dados dela.
+        */
+
+        if (selectedConversation) {
+
+          const updated =
+            conversations.find(
+              item =>
+                item.id ===
+                selectedConversation.id
+            );
+
+
+          if (updated) {
+
+            selectedConversation = updated;
+
+            renderSelectedConversation();
+
+          }
+
+        }
+
+      }
+
+      catch (error) {
+
+        console.error(error);
+
+        listElement.innerHTML = `
+          <div class="error">
+            Erro ao carregar SAC:<br><br>
+            ${escapeHtml(error.message)}
+          </div>
+        `;
+
+      }
+
+      finally {
+
+        document.getElementById(
+          "refreshButton"
+        ).textContent = "↻";
+
+      }
+
+    }
+
+
+    // =====================================================
+    // ESTATÍSTICAS
+    // =====================================================
+
+    function updateStats() {
+
+      const total =
+        conversations.length;
+
+
+      const review =
+        conversations.filter(
+          item =>
+            item.requires_review === true
+        ).length;
+
+
+      const unread =
+        conversations.reduce(
+          (sum, item) =>
+            sum +
+            Number(item.unread_count || 0),
+          0
+        );
+
+
+      document.getElementById(
+        "totalCount"
+      ).textContent = total;
+
+
+      document.getElementById(
+        "reviewCount"
+      ).textContent = review;
+
+
+      document.getElementById(
+        "unreadCount"
+      ).textContent = unread;
+
+    }
+
+
+    // =====================================================
+    // FILTRO
+    // =====================================================
+
+    function filteredConversations() {
+
+      const search =
+        searchInput.value
+          .trim()
+          .toLowerCase();
+
+
+      return conversations.filter(
+        item => {
+
+          if (
+            currentFilter === "review" &&
+            !item.requires_review
+          ) {
+            return false;
+          }
+
+
+          if (
+            currentFilter === "whatsapp" &&
+            item.channel !== "whatsapp"
+          ) {
+            return false;
+          }
+
+
+          if (!search) {
+            return true;
+          }
+
+
+          const text = [
+            item.contact_name,
+            item.external_user_id,
+            item.last_message,
+            item.channel
+          ]
+          .join(" ")
+          .toLowerCase();
+
+
+          return text.includes(search);
+
+        }
+      );
+
+    }
+
+
+    // =====================================================
+    // LISTA DE CONVERSAS
+    // =====================================================
+
+    function renderConversationList() {
+
+      const filtered =
+        filteredConversations();
+
+
+      if (!filtered.length) {
+
+        listElement.innerHTML = `
+          <div class="loading">
+            Nenhum atendimento encontrado.
+          </div>
+        `;
+
+        return;
+      }
+
+
+      listElement.innerHTML =
+        filtered.map(
+          item => {
+
+            const active =
+              selectedConversation &&
+              selectedConversation.id === item.id;
+
+
+            const channelClass =
+              item.channel === "whatsapp"
+                ? "whatsapp"
+                : "";
+
+
+            let badges = "";
+
+
+            if (
+              item.control_mode === "ai"
+            ) {
+
+              badges += `
+                <span class="badge badge-ai">
+                  IA
+                </span>
+              `;
+
+            }
+
+            else {
+
+              badges += `
+                <span class="badge badge-human">
+                  HUMANO
+                </span>
+              `;
+
+            }
+
+
+            if (item.requires_review) {
+
+              badges += `
+                <span class="badge badge-review">
+                  REVISAR
+                </span>
+              `;
+
+            }
+
+
+            if (
+              Number(item.open_audits || 0) > 0
+            ) {
+
+              badges += `
+                <span class="badge badge-danger">
+                  ALERTA
+                </span>
+              `;
+
+            }
+
+
+            return `
+
+              <div
+                class="conversation ${active ? "active" : ""}"
+                data-id="${escapeHtml(item.id)}"
+              >
+
+                <div class="conversation-top">
+
+                  <div class="contact-name">
+                    ${escapeHtml(
+                      item.contact_name ||
+                      item.external_user_id ||
+                      "Cliente"
+                    )}
+                  </div>
+
+                  <div class="time">
+                    ${formatDate(
+                      item.last_message_at
+                    )}
+                  </div>
+
+                </div>
+
+
+                <span
+                  class="channel ${channelClass}"
+                >
+                  ${escapeHtml(
+                    item.channel ||
+                    "SAC"
+                  )}
+                </span>
+
+
+                <div class="last-message">
+                  ${escapeHtml(
+                    item.last_message ||
+                    "Sem mensagem"
+                  )}
+                </div>
+
+
+                <div class="conversation-footer">
+
+                  ${badges}
+
+                  ${
+                    Number(
+                      item.unread_count || 0
+                    ) > 0
+                    ?
+                    `
+                    <span class="badge badge-open">
+                      ${
+                        Number(
+                          item.unread_count
+                        )
+                      } nova(s)
+                    </span>
+                    `
+                    :
+                    ""
+                  }
+
+                </div>
+
+              </div>
+
+            `;
+
+          }
+        )
+        .join("");
+
+
+      document
+        .querySelectorAll(
+          ".conversation"
+        )
+        .forEach(
+          element => {
+
+            element.addEventListener(
+              "click",
+              () => {
+
+                selectConversation(
+                  element.dataset.id
+                );
+
+              }
+            );
+
+          }
+        );
+
+    }
+
+
+    // =====================================================
+    // SELECIONAR CONVERSA
+    // =====================================================
+
+    function selectConversation(id) {
+
+      const conversation =
+        conversations.find(
+          item =>
+            String(item.id) ===
+            String(id)
+        );
+
+
+      if (!conversation) {
+        return;
+      }
+
+
+      selectedConversation =
+        conversation;
+
+
+      emptyState.style.display =
+        "none";
+
+
+      chatPanel.style.display =
+        "flex";
+
+
+      renderConversationList();
+
+      renderSelectedConversation();
+
+    }
+
+
+    // =====================================================
+    // CONVERSA SELECIONADA
+    // =====================================================
+
+    function renderSelectedConversation() {
+
+      if (!selectedConversation) {
+        return;
+      }
+
+
+      document.getElementById(
+        "chatName"
+      ).textContent =
+        selectedConversation.contact_name ||
+        selectedConversation.external_user_id ||
+        "Cliente";
+
+
+      document.getElementById(
+        "chatInfo"
+      ).textContent =
+        [
+          selectedConversation.channel,
+          selectedConversation.external_user_id,
+          selectedConversation.status
+        ]
+        .filter(Boolean)
+        .join(" • ");
+
+
+      document.getElementById(
+        "controlMode"
+      ).textContent =
+        selectedConversation.control_mode === "ai"
+          ? "IA"
+          : "HUMANO";
+
+
+      document.getElementById(
+        "reviewStatus"
+      ).textContent =
+        selectedConversation.requires_review
+          ? "⚠ Requer revisão"
+          : "✓ Atendimento normal";
+
+
+      renderMessages();
+
+    }
+
+
+    // =====================================================
+    // MENSAGENS
+    // =====================================================
+
+    function renderMessages() {
+
+      messagesElement.innerHTML = "";
+
+
+      /*
+        A rota live que montamos já fornece
+        a última mensagem.
+
+        Se ela também trouxer "messages"
+        ou "mensagens", mostramos o histórico.
+      */
+
+      const messages =
+        selectedConversation.messages ||
+        selectedConversation.mensagens ||
+        [];
+
+
+      if (messages.length) {
+
+        messages.forEach(
+          message => {
+
+            addMessageBubble(
+              message.text ||
+              message.message ||
+              message.body ||
+              "",
+              message.direction ||
+              message.direcao ||
+              "inbound",
+              message.created_at ||
+              message.timestamp
+            );
+
+          }
+        );
+
+      }
+
+      else if (
+        selectedConversation.last_message
+      ) {
+
+        addMessageBubble(
+          selectedConversation.last_message,
+          selectedConversation.last_message_direction ||
+          "inbound",
+          selectedConversation.last_message_at
+        );
+
+      }
+
+      else {
+
+        messagesElement.innerHTML = `
+          <div class="loading">
+            Nenhuma mensagem disponível.
+          </div>
+        `;
+
+      }
+
+
+      messagesElement.scrollTop =
+        messagesElement.scrollHeight;
+
+    }
+
+
+    function addMessageBubble(
+      text,
+      direction,
+      timestamp
+    ) {
+
+      const row =
+        document.createElement("div");
+
+
+      const normalizedDirection =
+        direction === "outbound"
+          ? "outbound"
+          : "inbound";
+
+
+      row.className =
+        "message-row " +
+        normalizedDirection;
+
+
+      row.innerHTML = `
+
+        <div class="bubble">
+
+          ${escapeHtml(text)}
+
+          <span class="message-meta">
+            ${formatDate(timestamp)}
+          </span>
+
+        </div>
+
+      `;
+
+
+      messagesElement.appendChild(row);
+
+    }
+
+
+    // =====================================================
+    // GERAR RASCUNHO IA
+    // =====================================================
+
+    async function generateDraft() {
+
+      if (!selectedConversation) {
+        return;
+      }
+
+
+      const button =
+        document.getElementById(
+          "draftButton"
+        );
+
+
+      const original =
+        button.textContent;
+
+
+      button.disabled = true;
+
+      button.textContent =
+        "Gerando...";
+
+
+      try {
+
+        const response =
+          await fetch(
+            `${API_BASE}/sac/${selectedConversation.id}/draft`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type":
+                  "application/json"
+              }
+            }
+          );
+
+
+        const data =
+          await response.json();
+
+
+        if (
+          !response.ok ||
+          !data.sucesso
+        ) {
+
+          throw new Error(
+            data.mensagem ||
+            "Erro ao gerar resposta."
+          );
+
+        }
+
+
+        const atendimento =
+          data.atendimento || {};
+
+
+        const draft =
+          atendimento.ai_draft ||
+          atendimento.draft ||
+          atendimento.suggested_reply ||
+          atendimento.response ||
+          "";
+
+
+        if (draft) {
+
+          replyText.value =
+            typeof draft === "string"
+              ? draft
+              : JSON.stringify(
+                  draft,
+                  null,
+                  2
+                );
+
+        }
+
+        else {
+
+          alert(
+            "A IA processou o atendimento, mas a resposta não veio em um campo reconhecido pela interface."
+          );
+
+        }
+
+      }
+
+      catch (error) {
+
+        alert(
+          "Erro ao gerar resposta IA:\n\n" +
+          error.message
+        );
+
+      }
+
+      finally {
+
+        button.disabled = false;
+
+        button.textContent =
+          original;
+
+      }
+
+    }
+
+
+    // =====================================================
+    // ENVIAR RESPOSTA
+    // =====================================================
+
+    async function sendReply() {
+
+      if (!selectedConversation) {
+        return;
+      }
+
+
+      const text =
+        replyText.value.trim();
+
+
+      if (!text) {
+
+        alert(
+          "Digite uma resposta antes de enviar."
+        );
+
+        return;
+
+      }
+
+
+      const confirmed =
+        confirm(
+          "Enviar esta resposta ao cliente?"
+        );
+
+
+      if (!confirmed) {
+        return;
+      }
+
+
+      const button =
+        document.getElementById(
+          "sendButton"
+        );
+
+
+      const original =
+        button.textContent;
+
+
+      button.disabled = true;
+
+      button.textContent =
+        "Enviando...";
+
+
+      try {
+
+        const response =
+          await fetch(
+            `${API_BASE}/sac/${selectedConversation.id}/send`,
+            {
+              method: "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
+
+              body: JSON.stringify({
+                text
+              })
+            }
+          );
+
+
+        const data =
+          await response.json();
+
+
+        if (
+          !response.ok ||
+          !data.sucesso
+        ) {
+
+          throw new Error(
+            data.mensagem ||
+            "Erro ao enviar resposta."
+          );
+
+        }
+
+
+        replyText.value = "";
+
+
+        alert(
+          "Resposta enviada com sucesso."
+        );
+
+
+        await loadCentral();
+
+      }
+
+      catch (error) {
+
+        alert(
+          "Erro ao enviar resposta:\n\n" +
+          error.message
+        );
+
+      }
+
+      finally {
+
+        button.disabled = false;
+
+        button.textContent =
+          original;
+
+      }
+
+    }
+
+
+    // =====================================================
+    // EVENTOS
+    // =====================================================
+
+    searchInput.addEventListener(
+      "input",
+      renderConversationList
+    );
+
+
+    document
+      .querySelectorAll(".filter")
+      .forEach(
+        button => {
+
+          if (
+            button.id ===
+            "refreshButton"
+          ) {
+            return;
+          }
+
+
+          button.addEventListener(
+            "click",
+            () => {
+
+              document
+                .querySelectorAll(
+                  ".filter"
+                )
+                .forEach(
+                  item =>
+                    item.classList.remove(
+                      "active"
+                    )
+                );
+
+
+              button.classList.add(
+                "active"
+              );
+
+
+              currentFilter =
+                button.dataset.filter;
+
+
+              renderConversationList();
+
+            }
+          );
+
+        }
+      );
+
+
+    document.getElementById(
+      "refreshButton"
+    ).addEventListener(
+      "click",
+      loadCentral
+    );
+
+
+    document.getElementById(
+      "reloadConversation"
+    ).addEventListener(
+      "click",
+      loadCentral
+    );
+
+
+    document.getElementById(
+      "draftButton"
+    ).addEventListener(
+      "click",
+      generateDraft
+    );
+
+
+    document.getElementById(
+      "sendButton"
+    ).addEventListener(
+      "click",
+      sendReply
+    );
+
+
+    // =====================================================
+    // INICIALIZAÇÃO
+    // =====================================================
+
+    loadCentral();
+
+
+    /*
+      Atualização automática.
+
+      Apenas consulta a central.
+      Não envia mensagem.
+    */
+
+    setInterval(
+      loadCentral,
+      10000
+    );
+
+  </script>
+
+</body>
+</html>
