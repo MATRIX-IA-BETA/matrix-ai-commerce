@@ -1091,6 +1091,209 @@ router.get(
 );
 
 
+
+/* ============================================================
+   CENTRAL SAC — ENVIO MANUAL PELO WHATSAPP
+
+   POST /sac/central/conversation/:id/send-whatsapp
+
+   Envia a mensagem diretamente pela WhatsApp Cloud API usando
+   o número (external_user_id) da conversa da Central SAC.
+   Esta rota usa o ID da CONVERSA, não o thread_id do Mercado Livre.
+============================================================ */
+
+router.post(
+  "/sac/central/conversation/:id/send-whatsapp",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id || "").trim();
+      const text = String(req.body?.text || "").trim();
+
+      if (!conversationId) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem: "conversation_id obrigatório."
+        });
+      }
+
+      if (!text) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem: "Digite uma mensagem antes de enviar."
+        });
+      }
+
+      const { data: conversa, error: conversaError } = await supabase
+        .from("sac_conversations")
+        .select("*")
+        .eq("id", conversationId)
+        .maybeSingle();
+
+      if (conversaError) {
+        throw conversaError;
+      }
+
+      if (!conversa) {
+        return res.status(404).json({
+          sucesso: false,
+          mensagem: "Conversa não encontrada."
+        });
+      }
+
+      if (String(conversa.channel || "").toLowerCase() !== "whatsapp") {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem: "Esta rota de envio manual é exclusiva para conversas do WhatsApp."
+        });
+      }
+
+      const destinatario = String(
+        conversa.external_user_id ||
+        conversa.phone_number ||
+        ""
+      ).replace(/\D/g, "");
+
+      if (!destinatario) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem: "A conversa não possui número de WhatsApp válido."
+        });
+      }
+
+      const accessToken =
+        env.WHATSAPP_ACCESS_TOKEN ||
+        process.env.WHATSAPP_ACCESS_TOKEN ||
+        process.env.TOKEN_DE_ACESSO_DO_WHATSAPP;
+
+      const phoneNumberId =
+        env.WHATSAPP_PHONE_NUMBER_ID ||
+        process.env.WHATSAPP_PHONE_NUMBER_ID ||
+        process.env.WHATSAPP_PHONE_ID ||
+        process.env.ID_DO_NUMERO_DE_TELEFONE_DO_WHATSAPP;
+
+      const apiVersion =
+        env.WHATSAPP_API_VERSION ||
+        process.env.WHATSAPP_API_VERSION ||
+        "v23.0";
+
+      if (!accessToken || !phoneNumberId) {
+        return res.status(500).json({
+          sucesso: false,
+          mensagem:
+            "WhatsApp não configurado para envio manual: faltam WHATSAPP_ACCESS_TOKEN ou WHATSAPP_PHONE_NUMBER_ID."
+        });
+      }
+
+      const respostaMeta = await fetch(
+        `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: destinatario,
+            type: "text",
+            text: {
+              preview_url: false,
+              body: text
+            }
+          })
+        }
+      );
+
+      const metaData = await respostaMeta.json().catch(() => ({}));
+
+      if (!respostaMeta.ok) {
+        console.error(
+          "[CENTRAL SAC] erro enviando WhatsApp manual:",
+          metaData
+        );
+
+        return res.status(respostaMeta.status || 500).json({
+          sucesso: false,
+          mensagem:
+            metaData?.error?.message ||
+            "WhatsApp recusou o envio da mensagem.",
+          detalhe: metaData
+        });
+      }
+
+      const externalMessageId =
+        metaData?.messages?.[0]?.id || null;
+
+      const agora = new Date().toISOString();
+
+      const { error: messageError } = await supabase
+        .from("sac_messages")
+        .insert({
+          conversation_id: conversationId,
+          channel: "whatsapp",
+          external_message_id: externalMessageId,
+          direction: "outbound",
+          sender_role: "human",
+          text,
+          content: text,
+          role: "assistant",
+          date_created: agora,
+          raw_data: metaData,
+          metadata: {
+            source: "sac_central_manual",
+            manual: true,
+            sent_by: "human_operator"
+          }
+        });
+
+      if (messageError) {
+        // A mensagem já saiu pelo WhatsApp. Não devemos reportar como
+        // "não enviada" só porque a gravação local falhou.
+        console.error(
+          "[CENTRAL SAC] mensagem enviada, mas falhou ao gravar sac_messages:",
+          messageError
+        );
+      }
+
+      const { error: conversationUpdateError } = await supabase
+        .from("sac_conversations")
+        .update({
+          last_message_at: agora,
+          updated_at: agora
+        })
+        .eq("id", conversationId);
+
+      if (conversationUpdateError) {
+        console.error(
+          "[CENTRAL SAC] falha atualizando conversa após envio manual:",
+          conversationUpdateError
+        );
+      }
+
+      return res.json({
+        sucesso: true,
+        mensagem: "Mensagem enviada pelo WhatsApp.",
+        conversation_id: conversationId,
+        destinatario,
+        external_message_id: externalMessageId
+      });
+
+    } catch (erro) {
+      console.error(
+        "[CENTRAL SAC] send-whatsapp:",
+        erro
+      );
+
+      return res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+
 /* ============================================================
    ATENÇÃO:
    AS ROTAS DINÂMICAS /sac/:id FICAM DAQUI PARA BAIXO.
