@@ -15,20 +15,26 @@ app.use(express.json({ limit: "2mb" }));
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
 
-// Arquivos estáticos da interface
 app.use(express.static(PUBLIC_DIR));
 
-// Central SAC
-function abrirCentralSac(req, res) {
-  return res.sendFile(
-    path.join(PUBLIC_DIR, "sac-central.html")
-  );
+function sendPublicFile(fileName) {
+  return (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, fileName));
+  };
 }
 
-// Endereços da Central SAC
-app.get("/sac/central", abrirCentralSac);
-app.get("/sac/mobile", abrirCentralSac);
-app.get("/sac/mobile.html", abrirCentralSac);
+// Central SAC WhatsApp
+app.get("/sac/central", sendPublicFile("sac-central.html"));
+app.get("/sac/mobile", sendPublicFile("sac-central.html"));
+app.get("/sac/mobile.html", sendPublicFile("sac-central.html"));
+
+// SAC - Perguntas Mercado Livre
+app.get("/sac/perguntas", sendPublicFile("mercadolivre-perguntas.html"));
+app.get("/sac/perguntas-ml", sendPublicFile("mercadolivre-perguntas.html"));
+
+// Painel executivo Mercado Livre
+app.get("/mercadolivre", sendPublicFile("mercadolivre-painel.html"));
+app.get("/painel/mercadolivre", sendPublicFile("mercadolivre-painel.html"));
 
 // =========================================================
 // ROTAS EXISTENTES
@@ -38,6 +44,7 @@ app.use(require("./src/routes/basic"));
 app.use(require("./src/routes/webhooks-mercadolivre"));
 app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/sac"));
+app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
 app.use(require("./src/routes/fiscal"));
@@ -89,7 +96,5 @@ app.use((error, req, res, next) => {
 const PORT = env.PORT || process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(
-    `Matrix AI Commerce V2 modular rodando na porta ${PORT}`
-  );
+  console.log(`Matrix AI Commerce V2 modular rodando na porta ${PORT}`);
 });
