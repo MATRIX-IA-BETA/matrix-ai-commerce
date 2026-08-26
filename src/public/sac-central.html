@@ -1,5 +1,117 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b1020"><title>Matrix AI — Central SAC</title><style>
-:root{--bg:#070b14;--p:#0d1324;--p2:#11192d;--line:#202a42;--txt:#eef3ff;--mut:#8f9bb3;--ok:#2dd4bf;--wrn:#f59e0b;--bad:#ef4444;--acc:#7c3aed;--in:#182238;--out:#312e81}*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:Inter,system-ui,Segoe UI,Arial,sans-serif}body{overflow:hidden}button,input,select{font:inherit}.app{height:100vh;height:100dvh;display:grid;grid-template-rows:auto 1fr}header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#0c1223;border-bottom:1px solid var(--line);z-index:5}.brand{display:flex;align-items:center;gap:9px;font-weight:800;white-space:nowrap}.logo{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,#7c3aed,#4f46e5);font-weight:900}.stats{display:flex;gap:7px;overflow:auto;flex:1}.chip{padding:6px 9px;border:1px solid var(--line);border-radius:999px;color:var(--mut);font-size:12px;white-space:nowrap}.chip b{color:var(--txt)}.pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:5px}.layout{display:grid;grid-template-columns:360px 1fr;min-height:0}.side{background:#0a0f1d;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}.filters{display:grid;grid-template-columns:1fr auto;gap:7px;padding:10px;border-bottom:1px solid var(--line)}input,select,.btn{background:#111827;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:9px 10px}.list{overflow:auto}.conv{padding:12px;border-bottom:1px solid #151d30;cursor:pointer}.conv:hover,.conv.active{background:#121b2f}.conv.active{border-left:3px solid var(--acc)}.top{display:flex;justify-content:space-between;gap:8px}.name{font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.time,.preview,.meta{color:var(--mut);font-size:11px}.preview{margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.badges{display:flex;gap:5px;margin-top:7px;flex-wrap:wrap}.badge{font-size:10px;padding:3px 6px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}.warn{color:#ffd78a}.danger{color:#ffadad}.ok{color:#8ef2e2}.main{display:grid;grid-template-rows:auto 1fr auto;min-width:0;min-height:0}.head{display:flex;align-items:center;gap:9px;justify-content:space-between;padding:10px 13px;border-bottom:1px solid var(--line);background:#0c1220}.who{min-width:0;flex:1}.who h2{margin:0;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.who small{color:var(--mut)}.actions{display:flex;gap:7px}.btn{cursor:pointer}.btn:disabled{opacity:.45;cursor:not-allowed}.messages{overflow:auto;padding:16px;display:flex;flex-direction:column;gap:9px;background:#080d18}.bubble{max-width:min(760px,82%);padding:10px 12px;border-radius:14px;line-height:1.38;font-size:14px}.in{align-self:flex-start;background:var(--in);border-bottom-left-radius:4px}.out{align-self:flex-end;background:var(--out);border-bottom-right-radius:4px}.analysis{margin-top:7px;padding:7px;background:rgba(0,0,0,.18);border-left:2px solid #64748b;border-radius:7px;color:#cbd5e1;font-size:12px}.composer{display:flex;gap:7px;padding:10px 13px;border-top:1px solid var(--line);background:#0c1220}.composer input{flex:1}.empty{display:grid;place-items:center;height:100%;text-align:center;color:var(--mut);padding:30px}.back{display:none}@media(max-width:760px){header{padding:9px 10px}.brand span:last-child{display:none}.layout{grid-template-columns:1fr}.side{position:absolute;inset:58px 0 0;z-index:3}.main{position:absolute;inset:58px 0 0;z-index:4;transform:translateX(100%);transition:.2s}.conversation-open .main{transform:none}.conversation-open .side{visibility:hidden}.back{display:block}.bubble{max-width:90%}.desktop{display:none}}
-</style></head><body><div class="app"><header><div class="brand"><div class="logo">M</div><span>Matrix AI</span><span>Central SAC</span></div><div id="stats" class="stats"><div class="chip"><span class="pulse"></span>Ao vivo</div></div><button id="refresh" class="btn">Atualizar</button></header><div class="layout"><aside class="side"><div class="filters"><input id="search" placeholder="Cliente, telefone ou mensagem…"><select id="filter"><option value="">Todos</option><option value="review">Revisão</option><option value="urgent">Urgentes</option><option value="attention">Atenção</option></select></div><div id="list" class="list"><div class="empty">Carregando atendimentos…</div></div></aside><main class="main"><div class="head"><button id="back" class="btn back">‹</button><div class="who"><h2 id="contact">Selecione uma conversa</h2><small id="contactMeta">Acompanhamento em tempo real</small></div><div class="actions"><button id="audit" class="btn desktop" disabled>Auditoria</button><button class="btn" disabled title="Intervenção humana entra na próxima fase">Assumir</button></div></div><div id="messages" class="messages"><div class="empty">💬<br><b>Central SAC Matrix</b><br>Escolha uma conversa para acompanhar cliente e IA.</div></div><div class="composer"><input disabled value="Modo observação — sem interferir nas respostas"><button class="btn" disabled>Enviar</button></div></main></div></div><script>
-(()=>{const $=x=>document.getElementById(x),S={rows:[],id:null};const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const tm=v=>{if(!v)return'';const d=new Date(v);return isNaN(d)?'':d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})};const name=c=>c.contact_name||c.buyer_nickname||c.external_user_id||'Cliente';const prev=c=>c.last_message_text||c.last_message||c.summary||c.last_response_text||'Sem prévia';async function J(u){const r=await fetch(u),d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw Error(d.mensagem||`HTTP ${r.status}`);return d}async function stats(){try{const d=await J('/sac/central/stats'),s=d.stats||{};$('stats').innerHTML=`<div class="chip"><span class="pulse"></span>Ao vivo</div><div class="chip">24h <b>${s.active_last_24h??0}</b></div><div class="chip">Revisão <b>${s.requires_review??0}</b></div><div class="chip">Urgentes <b>${s.urgent??0}</b></div><div class="chip">Auditorias <b>${s.open_audits??0}</b></div>`}catch(e){$('stats').innerHTML='<div class="chip">Stats indisponível</div>'}}async function live(){try{const d=await J('/sac/central/live?limit=300');S.rows=d.conversas||[];render()}catch(e){$('list').innerHTML=`<div class="empty">Erro: ${esc(e.message)}</div>`}}function render(){const q=$('search').value.toLowerCase(),f=$('filter').value;const rows=S.rows.filter(c=>{const h=`${name(c)} ${c.external_user_id||''} ${prev(c)}`.toLowerCase();if(q&&!h.includes(q))return false;if(f==='review'&&c.requires_review!==true)return false;if(f==='urgent'&&c.attention_level!=='urgent')return false;if(f==='attention'&&c.attention_level!=='attention')return false;return true});$('list').innerHTML=rows.length?rows.map(c=>`<div class="conv ${String(c.id)===String(S.id)?'active':''}" data-id="${esc(c.id)}"><div class="top"><div class="name">${esc(name(c))}</div><div class="time">${esc(tm(c.last_message_at))}</div></div><div class="preview">${esc(prev(c))}</div><div class="badges"><span class="badge ${c.control_mode==='human'?'warn':'ok'}">${esc(c.control_mode||'ai')}</span>${c.requires_review?'<span class="badge warn">revisão</span>':''}${c.attention_level==='urgent'?'<span class="badge danger">urgente</span>':''}${c.attention_level==='attention'?'<span class="badge warn">atenção</span>':''}</div></div>`).join(''):'<div class="empty">Nenhuma conversa.</div>';document.querySelectorAll('.conv').forEach(x=>x.onclick=()=>open(x.dataset.id))}async function open(id){S.id=id;render();document.body.classList.add('conversation-open');$('messages').innerHTML='<div class="empty">Carregando…</div>';try{const d=await J(`/sac/central/conversation/${encodeURIComponent(id)}?limit=500`),c=d.conversa||{};$('contact').textContent=name(c);$('contactMeta').textContent=`${c.channel||'canal'} • ${c.external_user_id||''} • ${c.control_mode||'ai'}`;const ms=d.mensagens||[];$('messages').innerHTML=ms.length?ms.map(m=>{const out=m.direction==='outbound'||m.role==='assistant'||m.sender_role==='assistant';const a=m.transcription||m.image_analysis||m.video_analysis;const lab=m.transcription?'Transcrição':m.image_analysis?'Análise da imagem':'Análise do vídeo';return `<div class="bubble ${out?'out':'in'}"><div>${esc(m.text||m.content||'(mídia)')}</div>${a?`<div class="analysis"><b>${lab}:</b><br>${esc(typeof a==='string'?a:JSON.stringify(a))}</div>`:''}<div class="meta">${out?'Matrix AI':'Cliente'} • ${esc(tm(m.date_created||m.created_at))}${m.ai_model?' • '+esc(m.ai_model):''}</div></div>`}).join(''):'<div class="empty">Nenhuma mensagem registrada.</div>';$('messages').scrollTop=$('messages').scrollHeight;const au=d.auditorias||[];$('audit').disabled=!au.length;$('audit').onclick=()=>alert(au.slice(0,10).map(a=>`[${a.severity||'info'}] ${a.summary||a.reason||a.title||JSON.stringify(a)}`).join('\n\n'))}catch(e){$('messages').innerHTML=`<div class="empty">Erro: ${esc(e.message)}</div>`}}async function refresh(){await Promise.all([stats(),live()]);if(S.id)await open(S.id)}$('search').oninput=render;$('filter').onchange=render;$('refresh').onclick=refresh;$('back').onclick=()=>document.body.classList.remove('conversation-open');stats();live();setInterval(async()=>{await Promise.all([stats(),live()]);if(S.id)await open(S.id)},5000)})();
-</script></body></html>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Matrix AI - Central SAC</title>
+<style>
+:root{--bg:#07101d;--panel:#0d1728;--line:#22314b;--txt:#eef4ff;--muted:#90a0b8;--in:#17243a;--out:#2b347a;--acc:#6d5dfc}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:Arial,sans-serif}
+body{overflow:hidden}.app{height:100dvh;display:grid;grid-template-rows:58px 1fr}
+header{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:#0b1423}
+.logo{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:var(--acc);font-weight:800}
+.title{font-weight:800}.status{margin-left:auto;color:#8ee8d7;font-size:12px}.layout{display:grid;grid-template-columns:350px 1fr;min-height:0}
+.side{min-height:0;border-right:1px solid var(--line);background:#091220;display:grid;grid-template-rows:auto 1fr}
+.filters{padding:10px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+input,select,button{background:#111d31;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:9px}
+.filters input{flex:1;min-width:0}.list{overflow:auto}.conv{padding:12px;border-bottom:1px solid #17243a;cursor:pointer}
+.conv.active{background:#16213a;border-left:3px solid var(--acc)}.name{font-weight:700}.preview,.time{color:var(--muted);font-size:12px}.preview{margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.main{min-height:0;display:grid;grid-template-rows:auto 1fr;background:#07101d}.head{padding:11px 12px;border-bottom:1px solid var(--line);background:#0b1423;display:flex;align-items:center;gap:8px}
+.back{display:none}.who{min-width:0}.who b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.who small{color:var(--muted)}
+.msgs{overflow:auto;padding:14px;display:flex;flex-direction:column;gap:9px}.bubble{max-width:82%;padding:10px 11px;border-radius:13px;line-height:1.35;font-size:14px}
+.in{align-self:flex-start;background:var(--in);border-bottom-left-radius:4px}.out{align-self:flex-end;background:var(--out);border-bottom-right-radius:4px}.meta{font-size:10px;color:#a9b5c8;margin-top:5px}
+.analysis{margin-top:7px;padding:7px;border-left:2px solid #7784a3;background:rgba(0,0,0,.15);font-size:12px;color:#d0d8e6}
+.empty{height:100%;display:grid;place-items:center;color:var(--muted);padding:20px;text-align:center}
+.composer{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line);background:#0b1423}
+.composer textarea{flex:1;resize:none;min-height:42px;max-height:120px;background:#111d31;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:10px;outline:none}
+.send{background:var(--acc);font-weight:700;min-width:78px}.send:disabled{opacity:.45}
+.main{grid-template-rows:auto 1fr auto}
+@media(max-width:760px){
+.layout{display:block}.side,.main{position:absolute;top:58px;bottom:0;left:0;right:0}.main{transform:translateX(100%);transition:.18s;z-index:5}.side{z-index:4;border-right:0}
+body.open .main{transform:translateX(0)}body.open .side{visibility:hidden}.back{display:inline-block}.bubble{max-width:89%}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<header><div class="logo">M</div><div class="title">Matrix AI - Central SAC</div><div class="status">● ao vivo</div></header>
+<div class="layout">
+<section class="side">
+<div class="filters"><input id="q" placeholder="Buscar cliente..."><select id="f"><option value="">Todos</option><option value="review">Revisão</option><option value="urgent">Urgente</option></select></div>
+<div class="list" id="list"><div class="empty">Carregando atendimentos...</div></div>
+</section>
+<section class="main">
+<div class="head"><button class="back" id="back">‹</button><div class="who"><b id="who">Selecione uma conversa</b><small id="meta">Acompanhamento em tempo real</small></div></div>
+<div class="msgs" id="msgs"><div class="empty">Escolha uma conversa para acompanhar o que o cliente enviou e o que a IA respondeu.</div></div>
+<div class="composer">
+  <textarea id="reply" placeholder="Digite sua resposta..." disabled></textarea>
+  <button class="send" id="send" disabled>Enviar</button>
+</div>
+</section>
+</div></div>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+const S={rows:[],id:null,threadId:null,listSig:"",convSig:"",busy:false,sending:false};
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=v=>{if(!v)return"";const d=new Date(v);return isNaN(d)? "":d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})};
+const name=c=>c.contact_name||c.buyer_nickname||c.external_user_id||c.phone_number||"Cliente";
+const prev=c=>c.last_message_text||c.last_message||c.summary||c.last_response_text||"Sem prévia";
+const sig=v=>{try{return JSON.stringify(v)}catch{return String(Date.now())}};
+async function get(url){const r=await fetch(url,{cache:"no-store"});const d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||("HTTP "+r.status));return d}
+async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});const d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||("HTTP "+r.status));return d}
+function renderList(){
+ const q=$("q").value.toLowerCase().trim(),f=$("f").value,box=$("list"),old=box.scrollTop;
+ const rows=S.rows.filter(c=>{const h=(name(c)+" "+prev(c)+" "+(c.external_user_id||"")).toLowerCase();if(q&&!h.includes(q))return false;if(f==="review"&&c.requires_review!==true)return false;if(f==="urgent"&&c.attention_level!=="urgent")return false;return true});
+ box.innerHTML=rows.length?rows.map(c=>`<div class="conv ${String(c.id)===String(S.id)?"active":""}" data-id="${esc(c.id)}"><div style="display:flex;justify-content:space-between;gap:8px"><span class="name">${esc(name(c))}</span><span class="time">${esc(fmt(c.last_message_at))}</span></div><div class="preview">${esc(prev(c))}</div></div>`).join(""):'<div class="empty">Nenhuma conversa encontrada.</div>';
+ box.scrollTop=old;document.querySelectorAll(".conv").forEach(el=>el.onclick=()=>openConv(el.dataset.id,true));
+}
+async function loadList(force=false){
+ const d=await get("/sac/central/live?limit=300");const rows=d.conversas||[];const s=sig(rows.map(c=>[c.id,c.last_message_at,prev(c),c.requires_review,c.attention_level,c.control_mode]));S.rows=rows;if(force||s!==S.listSig){S.listSig=s;renderList()}
+}
+async function openConv(id,manual=false){
+ if(manual){S.id=id;S.convSig="";document.body.classList.add("open");renderList();$("msgs").innerHTML='<div class="empty">Carregando conversa...</div>'}
+ const d=await get("/sac/central/conversation/"+encodeURIComponent(id)+"?limit=500");const m=d.mensagens||[];const latestWithThread=[...m].reverse().find(x=>x.thread_id);S.threadId=latestWithThread?.thread_id||null;$("reply").disabled=!S.threadId;$("send").disabled=!S.threadId;$("reply").placeholder=S.threadId?"Digite sua resposta...":"Esta conversa ainda não possui thread de envio vinculada.";const s=sig([d.conversa?.last_message_at,m.map(x=>[x.id,x.created_at,x.date_created,x.text,x.content,x.metadata])]);if(!manual&&s===S.convSig)return;S.convSig=s;
+ const c=d.conversa||{};$("who").textContent=name(c);$("meta").textContent=(c.channel||"canal")+" • "+(c.external_user_id||"")+" • "+(c.control_mode||"ai");
+ const box=$("msgs"),near=box.scrollHeight-box.scrollTop-box.clientHeight<120,old=box.scrollTop;
+ box.innerHTML=m.length?m.map(x=>{const out=x.direction==="outbound"||x.role==="assistant"||x.sender_role==="assistant";const a=x.transcription||x.image_analysis||x.video_analysis;return `<div class="bubble ${out?"out":"in"}"><div>${esc(x.text||x.content||"(mídia)")}</div>${a?`<div class="analysis">${esc(typeof a==="string"?a:JSON.stringify(a))}</div>`:""}<div class="meta">${out?"Matrix AI":"Cliente"} • ${esc(fmt(x.date_created||x.created_at))}</div></div>`}).join(""):'<div class="empty">Nenhuma mensagem registrada.</div>';
+ if(manual||near)box.scrollTop=box.scrollHeight;else box.scrollTop=old;
+}
+async function refresh(force=false){
+ if(S.busy)return;S.busy=true;try{await loadList(force);if(S.id)await openConv(S.id,false)}catch(e){console.error(e)}finally{S.busy=false}
+}
+
+async function sendReply(){
+ if(S.sending)return;
+ const text=$("reply").value.trim();
+ if(!text||!S.threadId)return;
+ S.sending=true;$("send").disabled=true;$("send").textContent="Enviando...";
+ try{
+   await post("/sac/"+encodeURIComponent(S.threadId)+"/send",{text});
+   $("reply").value="";
+   S.convSig="";
+   await openConv(S.id,false);
+   await loadList(true);
+ }catch(e){
+   alert("Erro ao enviar: "+e.message);
+ }finally{
+   S.sending=false;
+   $("send").textContent="Enviar";
+   $("send").disabled=!S.threadId;
+ }
+}
+$("send").onclick=sendReply;
+$("reply").addEventListener("keydown",e=>{
+ if(e.key==="Enter"&&!e.shiftKey){
+   e.preventDefault();
+   sendReply();
+ }
+});
+$("q").oninput=renderList;$("f").onchange=renderList;$("back").onclick=()=>document.body.classList.remove("open");
+refresh(true);
+setInterval(()=>refresh(false),8000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh(false)});
+})();
+</script>
+</body>
+</html>
