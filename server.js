@@ -19,6 +19,11 @@ app.use(express.static(PUBLIC_DIR));
 
 function sendPublicFile(fileName) {
   return (req, res) => {
+    res.set({
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0"
+    });
     res.sendFile(path.join(PUBLIC_DIR, fileName));
   };
 }
