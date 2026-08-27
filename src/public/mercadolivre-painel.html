@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Matrix AI — Mercado Livre</title>
+<style>
+:root{--bg:#07111f;--panel:#0c1728;--line:#20314a;--text:#edf4ff;--muted:#90a1b8;--good:#2dd4bf;--warn:#f59e0b;--bad:#ef4444;--accent:#6d5dfc}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,Segoe UI,Arial,sans-serif}
+body{min-height:100vh}.app{max-width:1600px;margin:auto;padding:14px}header{display:flex;gap:12px;justify-content:space-between;align-items:center;position:sticky;top:0;background:rgba(7,17,31,.96);padding:10px 0;border-bottom:1px solid var(--line);z-index:10}
+.brand{display:flex;align-items:center;gap:10px}.logo{width:40px;height:40px;border-radius:12px;background:var(--accent);display:grid;place-items:center;font-weight:900}
+h1,h2{margin:0}.brand h1{font-size:18px}.brand small,.muted{color:var(--muted)}.controls{display:flex;gap:7px;flex-wrap:wrap}
+button,select,a.btn{background:#101d31;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 11px;text-decoration:none;cursor:pointer}
+.grid{display:grid;gap:11px}.kpis{grid-template-columns:repeat(6,minmax(0,1fr))}.card{background:linear-gradient(180deg,#0d192b,#091423);border:1px solid var(--line);border-radius:14px;padding:14px}
+.section{margin-top:20px}.sectionHead{display:flex;justify-content:space-between;gap:12px;align-items:end;margin-bottom:9px}.sectionHead h2{font-size:17px}.label{color:var(--muted);font-size:12px}.value{font-size:25px;font-weight:850;margin-top:6px}.sub{color:var(--muted);font-size:11px;margin-top:4px}
+.two{grid-template-columns:1fr 1fr}.three{grid-template-columns:repeat(3,1fr)}.ai{border-color:#423485;background:linear-gradient(135deg,#16112f,#0b1727)}.insight{padding:10px;border:1px solid var(--line);border-radius:10px;margin-top:8px}.insight b{font-size:13px}.insight p{font-size:12px;color:#b8c4d6;margin:4px 0 0;line-height:1.4}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 10px;border-bottom:1px solid #17243a;text-align:left}th{color:var(--muted)}.scroll{overflow:auto}.num{text-align:right}.empty{text-align:center;color:var(--muted);padding:15px}
+.score{font-size:44px;font-weight:900}.good{color:#80efe0}.warn{color:#ffd27a}.bad{color:#ff9b9b}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.two,.three{grid-template-columns:1fr}}
+@media(max-width:650px){.kpis{grid-template-columns:repeat(2,1fr)}.value{font-size:20px}.brand small{display:none}}
+</style>
+</head>
+<body><div class="app">
+<header>
+<div class="brand"><div class="logo">M</div><div><h1>Matrix AI — Mercado Livre</h1><small>Gestão financeira, perdas e oportunidades</small></div></div>
+<div class="controls">
+<a class="btn" href="/sac/perguntas">Perguntas ML</a>
+<a class="btn" href="/sac/central">Central SAC</a>
+<select id="days"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="60">60 dias</option><option value="90">90 dias</option></select>
+<button id="refresh">Atualizar</button>
+</div>
+</header>
+
+<div class="section">
+<div class="sectionHead"><div><h2>Financeiro</h2><span class="muted">Dados reais; ausência de dado não vira lucro fictício.</span></div></div>
+<div class="grid kpis">
+<div class="card"><div class="label">Faturamento bruto</div><div class="value" id="gross">—</div><div class="sub">Vendas</div></div>
+<div class="card"><div class="label">Receita líquida</div><div class="value" id="net">—</div><div class="sub">Receita medida</div></div>
+<div class="card"><div class="label">Lucro / margem</div><div class="value" id="margin">—</div><div class="sub" id="marginSub">—</div></div>
+<div class="card"><div class="label">Taxas ML</div><div class="value warn" id="fees">—</div><div class="sub">Comissões/tarifas</div></div>
+<div class="card"><div class="label">Ads</div><div class="value warn" id="ads">—</div><div class="sub" id="acos">ACOS: —</div></div>
+<div class="card"><div class="label">Dinheiro perdido</div><div class="value bad" id="lost">—</div><div class="sub">Perdas medidas</div></div>
+</div>
+</div>
+
+<div class="section">
+<div class="sectionHead"><div><h2>Operação</h2></div></div>
+<div class="grid kpis">
+<div class="card"><div class="label">Pedidos</div><div class="value" id="orders">—</div></div>
+<div class="card"><div class="label">Unidades</div><div class="value" id="units">—</div></div>
+<div class="card"><div class="label">Ticket médio</div><div class="value" id="ticket">—</div></div>
+<div class="card"><div class="label">Frete</div><div class="value" id="shipping">—</div></div>
+<div class="card"><div class="label">Custo produto</div><div class="value" id="productCost">—</div></div>
+<div class="card"><div class="label">Devoluções</div><div class="value" id="returnsCount">—</div></div>
+</div>
+</div>
+
+<div class="section grid two">
+<div class="card ai"><div class="sectionHead"><div><h2>Matrix AI</h2><span class="muted">Onde você está perdendo dinheiro e o que atacar.</span></div></div><div id="insights"></div></div>
+<div class="card"><div class="sectionHead"><div><h2>Saúde da operação</h2></div></div><div class="score" id="health">—</div><div class="muted" id="healthText">Score com dados disponíveis.</div></div>
+</div>
+
+<div class="section grid two">
+<div class="card"><div class="sectionHead"><div><h2>Maiores perdas</h2></div></div><div class="scroll"><table><thead><tr><th>Tipo</th><th>Causa</th><th class="num">Eventos</th><th class="num">Perda</th></tr></thead><tbody id="lossRows"></tbody></table></div></div>
+<div class="card"><div class="sectionHead"><div><h2>Oportunidades</h2></div></div><div class="scroll"><table><thead><tr><th>Oportunidade</th><th>Status</th><th class="num">Ganho</th></tr></thead><tbody id="oppRows"></tbody></table></div></div>
+</div>
+
+<div class="section card"><div class="sectionHead"><div><h2>Devoluções</h2><span class="muted">Motivos e perdas.</span></div></div><div class="scroll"><table><thead><tr><th>Data</th><th>Pedido</th><th>Item</th><th>Motivo</th><th>Categoria IA</th><th class="num">Perda</th></tr></thead><tbody id="returnRows"></tbody></table></div></div>
+<div class="muted" style="text-align:center;padding:18px" id="foot">Matrix AI Commerce</div>
+</div>
+<script>
+const $=id=>document.getElementById(id),BRL=new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
+const money=v=>v==null||!Number.isFinite(Number(v))?"—":BRL.format(Number(v));
+const num=v=>v==null||!Number.isFinite(Number(v))?"—":new Intl.NumberFormat("pt-BR",{maximumFractionDigits:0}).format(Number(v));
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function load(){try{const d=Number($("days").value),r=await fetch(`/api/analytics/executive?days=${d}`,{cache:"no-store"}),x=await r.json();if(!r.ok||x.sucesso===false)throw new Error(x.mensagem||`HTTP ${r.status}`);render(x)}catch(e){alert("Analytics: "+e.message)}}
+function render(x){const t=x.totals||{};$("gross").textContent=money(t.gross_revenue);$("net").textContent=money(t.net_revenue);$("fees").textContent=money(t.marketplace_fees);$("ads").textContent=money(t.ads_spend);$("orders").textContent=num(t.orders_count);$("units").textContent=num(t.units_sold);$("shipping").textContent=money(t.shipping_cost);$("productCost").textContent=money(t.product_cost);$("returnsCount").textContent=num((x.returns||[]).length);$("ticket").textContent=Number(t.orders_count)?money(Number(t.net_revenue||0)/Number(t.orders_count)):"—";
+const complete=t.profitability_complete!==false&&t.contribution_margin!=null;$("margin").textContent=complete?money(t.contribution_margin):"INCOMPLETO";$("marginSub").textContent=complete?`Margem ${Number(t.margin_percent||0).toFixed(2)}%`:"Faltam dados reais";$("lost").textContent=money(Number(t.returns_loss||0));$("acos").textContent="ACOS: "+((x.daily||[]).some(a=>a.acos_percent!=null)?Number((x.daily||[]).filter(a=>a.acos_percent!=null).at(-1)?.acos_percent||0).toFixed(2)+"%":"sem dado");
+$("health").textContent=x.health?.health_score==null?"—":Math.round(x.health.health_score)+"/100";$("healthText").textContent=x.health?.explanation?JSON.stringify(x.health.explanation):"Score com dados disponíveis.";
+const ins=x.insights||[];$("insights").innerHTML=ins.length?ins.slice(0,10).map(i=>`<div class="insight"><b>${esc(i.title||i.insight_type)}</b><p>${esc(i.summary||"")}</p>${i.recommendation?`<p><b>Ação:</b> ${esc(i.recommendation)}</p>`:""}</div>`).join(""):`<div class="empty">Nenhum insight aberto ou dados ainda incompletos.</div>`;
+$("lossRows").innerHTML=(x.losses||[]).length?(x.losses||[]).slice(0,20).map(r=>`<tr><td>${esc(r.loss_type||"evento")}</td><td>${esc(r.cause_category||"—")}</td><td class="num">${num(r.events_count)}</td><td class="num">${money(r.total_loss)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">Sem perdas consolidadas.</td></tr>`;
+$("oppRows").innerHTML=(x.opportunities||[]).length?(x.opportunities||[]).slice(0,20).map(r=>`<tr><td>${esc(r.title||r.opportunity_type||"Oportunidade")}</td><td>${esc(r.status||"open")}</td><td class="num">${money(r.expected_gain)}</td></tr>`).join(""):`<tr><td colspan="3" class="empty">Sem oportunidades registradas.</td></tr>`;
+$("returnRows").innerHTML=(x.returns||[]).length?(x.returns||[]).slice(0,100).map(r=>`<tr><td>${esc(String(r.opened_at||"").slice(0,10))}</td><td>${esc(r.marketplace_order_id||"—")}</td><td>${esc(r.item_id||"—")}</td><td>${esc(r.reason_text||"—")}</td><td>${esc(r.ai_reason_category||"—")}</td><td class="num">${money(r.total_loss)}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">Sem devoluções registradas.</td></tr>`;
+$("foot").textContent=`Conta ${x.account_id||"—"} • ${x.window_days||$("days").value} dias • ${new Date(x.trust?.generated_at||Date.now()).toLocaleString("pt-BR")}`}
+$("refresh").onclick=load;$("days").onchange=load;load();
+</script></body></html>
