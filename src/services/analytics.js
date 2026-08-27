@@ -138,10 +138,13 @@ function addMetric(acc, date, accountId) {
       gross_revenue: 0,
       net_revenue: 0,
       marketplace_fees: 0,
+      marketplace_fees_complete: true,
       shipping_cost: 0,
+      shipping_cost_complete: true,
       product_cost: null,
       ads_spend: null,
       returns_loss: 0,
+      returns_data_complete: false,
       contribution_margin: null,
       margin_percent: null,
       average_ticket: 0,
@@ -250,12 +253,14 @@ function buildDailyMetrics(orders, itemsByOrder) {
       if (fee != null) {
         metric.marketplace_fees += fee;
       } else {
+        metric.marketplace_fees_complete = false;
         metric.profitability_complete = false;
       }
 
       if (shipping != null) {
         metric.shipping_cost += Math.abs(shipping);
       } else {
+        metric.shipping_cost_complete = false;
         metric.profitability_complete = false;
       }
     }
@@ -283,19 +288,27 @@ function buildDailyMetrics(orders, itemsByOrder) {
       units_sold: Math.round(metric.units_sold),
       gross_revenue: roundMoney(metric.gross_revenue),
       net_revenue: netRevenue,
-      marketplace_fees: roundMoney(metric.marketplace_fees),
-      marketplace_fee: roundMoney(metric.marketplace_fees),
-      shipping_cost: roundMoney(metric.shipping_cost),
+      marketplace_fees: metric.marketplace_fees_complete
+        ? roundMoney(metric.marketplace_fees)
+        : null,
+      marketplace_fee: metric.marketplace_fees_complete
+        ? roundMoney(metric.marketplace_fees)
+        : null,
+      shipping_cost: metric.shipping_cost_complete
+        ? roundMoney(metric.shipping_cost)
+        : null,
       product_cost: metric.product_cost,
       ads_spend: metric.ads_spend,
       ads_cost: metric.ads_spend,
-      returns_loss: roundMoney(metric.returns_loss),
+      returns_loss: metric.returns_data_complete
+        ? roundMoney(metric.returns_loss)
+        : null,
       contribution_margin: contribution == null ? null : roundMoney(contribution),
       margin_percent: contribution != null && metric.gross_revenue > 0
         ? roundMoney((contribution / metric.gross_revenue) * 100)
         : null,
-      average_ticket: metric.orders_count > 0
-        ? roundMoney(metric.gross_revenue / metric.orders_count)
+      average_ticket: (metric.paid_orders_count || metric.orders_count) > 0
+        ? roundMoney(metric.gross_revenue / (metric.paid_orders_count || metric.orders_count))
         : 0,
       profitability_complete: profitabilityComplete,
       updated_at: new Date().toISOString()
@@ -384,10 +397,13 @@ function aggregateDaily(records) {
     gross_revenue: 0,
     net_revenue: 0,
     marketplace_fees: 0,
+    marketplace_fees_complete: true,
     shipping_cost: 0,
+    shipping_cost_complete: true,
     product_cost: null,
     ads_spend: null,
     returns_loss: 0,
+    returns_data_complete: true,
     contribution_margin: null,
     average_ticket: 0,
     margin_percent: null,
@@ -406,25 +422,46 @@ function aggregateDaily(records) {
     } else {
       netRevenueComplete = false;
     }
-    totals.marketplace_fees += toNumber(row.marketplace_fees, toNumber(row.marketplace_fee));
-    totals.shipping_cost += toNumber(row.shipping_cost);
+    const rowFees = row.marketplace_fees ?? row.marketplace_fee;
+    if (rowFees != null) {
+      totals.marketplace_fees += toNumber(rowFees);
+    } else {
+      totals.marketplace_fees_complete = false;
+    }
+    if (row.marketplace_fees_complete === false) totals.marketplace_fees_complete = false;
+
+    if (row.shipping_cost != null) {
+      totals.shipping_cost += toNumber(row.shipping_cost);
+    } else {
+      totals.shipping_cost_complete = false;
+    }
+    if (row.shipping_cost_complete === false) totals.shipping_cost_complete = false;
     if (row.product_cost != null) {
       totals.product_cost = toNumber(totals.product_cost) + toNumber(row.product_cost);
     }
     if (row.ads_spend != null || row.ads_cost != null) {
       totals.ads_spend = toNumber(totals.ads_spend) + toNumber(row.ads_spend, toNumber(row.ads_cost));
     }
-    totals.returns_loss += toNumber(row.returns_loss);
+    if (row.returns_loss != null) {
+      totals.returns_loss += toNumber(row.returns_loss);
+    } else {
+      totals.returns_data_complete = false;
+    }
+    if (row.returns_data_complete === false) totals.returns_data_complete = false;
     if (row.contribution_margin != null) {
       totals.contribution_margin = toNumber(totals.contribution_margin) + toNumber(row.contribution_margin);
     }
     if (row.profitability_complete === false) totals.profitability_complete = false;
   }
 
-  totals.average_ticket = totals.orders_count > 0
-    ? roundMoney(totals.gross_revenue / totals.orders_count)
+  const ticketOrders = totals.paid_orders_count || totals.orders_count;
+  totals.average_ticket = ticketOrders > 0
+    ? roundMoney(totals.gross_revenue / ticketOrders)
     : 0;
   if (!netRevenueComplete) totals.net_revenue = null;
+  if (!totals.marketplace_fees_complete) totals.marketplace_fees = null;
+  if (!totals.shipping_cost_complete) totals.shipping_cost = null;
+  if (!totals.returns_data_complete) totals.returns_loss = null;
   if (!totals.profitability_complete) totals.contribution_margin = null;
   totals.margin_percent = totals.contribution_margin != null && totals.gross_revenue > 0
     ? roundMoney((totals.contribution_margin / totals.gross_revenue) * 100)
@@ -559,6 +596,7 @@ async function loadExecutive(supabase, days = 30, options = {}) {
     losses: [],
     opportunities: [],
     returns: [],
+    returns_complete: false,
     trust: {
       mode: "real-data-only",
       estimated_values_are_never_silently_zero: true,
