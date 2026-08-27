@@ -1,85 +1,130 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Matrix AI — Mercado Livre</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Matrix AI - Central SAC</title>
 <style>
-:root{--bg:#07111f;--panel:#0c1728;--line:#20314a;--text:#edf4ff;--muted:#90a1b8;--good:#2dd4bf;--warn:#f59e0b;--bad:#ef4444;--accent:#6d5dfc}
-*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,Segoe UI,Arial,sans-serif}
-body{min-height:100vh}.app{max-width:1600px;margin:auto;padding:14px}header{display:flex;gap:12px;justify-content:space-between;align-items:center;position:sticky;top:0;background:rgba(7,17,31,.96);padding:10px 0;border-bottom:1px solid var(--line);z-index:10}
-.brand{display:flex;align-items:center;gap:10px}.logo{width:40px;height:40px;border-radius:12px;background:var(--accent);display:grid;place-items:center;font-weight:900}
-h1,h2{margin:0}.brand h1{font-size:18px}.brand small,.muted{color:var(--muted)}.controls{display:flex;gap:7px;flex-wrap:wrap}
-button,select,a.btn{background:#101d31;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:9px 11px;text-decoration:none;cursor:pointer}
-.grid{display:grid;gap:11px}.kpis{grid-template-columns:repeat(6,minmax(0,1fr))}.card{background:linear-gradient(180deg,#0d192b,#091423);border:1px solid var(--line);border-radius:14px;padding:14px}
-.section{margin-top:20px}.sectionHead{display:flex;justify-content:space-between;gap:12px;align-items:end;margin-bottom:9px}.sectionHead h2{font-size:17px}.label{color:var(--muted);font-size:12px}.value{font-size:25px;font-weight:850;margin-top:6px}.sub{color:var(--muted);font-size:11px;margin-top:4px}
-.two{grid-template-columns:1fr 1fr}.three{grid-template-columns:repeat(3,1fr)}.ai{border-color:#423485;background:linear-gradient(135deg,#16112f,#0b1727)}.insight{padding:10px;border:1px solid var(--line);border-radius:10px;margin-top:8px}.insight b{font-size:13px}.insight p{font-size:12px;color:#b8c4d6;margin:4px 0 0;line-height:1.4}
-table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:9px 10px;border-bottom:1px solid #17243a;text-align:left}th{color:var(--muted)}.scroll{overflow:auto}.num{text-align:right}.empty{text-align:center;color:var(--muted);padding:15px}
-.score{font-size:44px;font-weight:900}.good{color:#80efe0}.warn{color:#ffd27a}.bad{color:#ff9b9b}
-@media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}.two,.three{grid-template-columns:1fr}}
-@media(max-width:650px){.kpis{grid-template-columns:repeat(2,1fr)}.value{font-size:20px}.brand small{display:none}}
+:root{--bg:#07101d;--panel:#0d1728;--line:#22314b;--txt:#eef4ff;--muted:#90a0b8;--in:#17243a;--out:#2b347a;--acc:#6d5dfc}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:Arial,sans-serif}
+body{overflow:hidden}.app{height:100dvh;display:grid;grid-template-rows:58px 1fr}
+header{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:#0b1423}
+.logo{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:var(--acc);font-weight:800}
+.title{font-weight:800}.status{margin-left:auto;color:#8ee8d7;font-size:12px}.layout{display:grid;grid-template-columns:350px 1fr;min-height:0}
+.side{min-height:0;border-right:1px solid var(--line);background:#091220;display:grid;grid-template-rows:auto 1fr}
+.filters{padding:10px;border-bottom:1px solid var(--line);display:flex;gap:8px}
+input,select,button{background:#111d31;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:9px}
+.filters input{flex:1;min-width:0}.list{overflow:auto}.conv{padding:12px;border-bottom:1px solid #17243a;cursor:pointer}
+.conv.active{background:#16213a;border-left:3px solid var(--acc)}.name{font-weight:700}.preview,.time{color:var(--muted);font-size:12px}.preview{margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.main{min-height:0;display:grid;grid-template-rows:auto 1fr;background:#07101d}.head{padding:11px 12px;border-bottom:1px solid var(--line);background:#0b1423;display:flex;align-items:center;gap:8px}
+.back{display:none}.who{min-width:0}.who b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.who small{color:var(--muted)}
+.msgs{overflow:auto;padding:14px;display:flex;flex-direction:column;gap:9px}.bubble{max-width:82%;padding:10px 11px;border-radius:13px;line-height:1.35;font-size:14px}
+.in{align-self:flex-start;background:var(--in);border-bottom-left-radius:4px}.out{align-self:flex-end;background:var(--out);border-bottom-right-radius:4px}.meta{font-size:10px;color:#a9b5c8;margin-top:5px}
+.analysis{margin-top:7px;padding:7px;border-left:2px solid #7784a3;background:rgba(0,0,0,.15);font-size:12px;color:#d0d8e6}
+.empty{height:100%;display:grid;place-items:center;color:var(--muted);padding:20px;text-align:center}
+.composer{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line);background:#0b1423}
+.composer textarea{flex:1;resize:none;min-height:42px;max-height:120px;background:#111d31;color:var(--txt);border:1px solid var(--line);border-radius:9px;padding:10px;outline:none}
+.send{background:var(--acc);font-weight:700;min-width:78px}.send:disabled{opacity:.45}
+.main{grid-template-rows:auto 1fr auto}
+@media(max-width:760px){
+.app{grid-template-rows:52px 1fr}header{gap:7px;padding:8px}.logo{width:34px;height:34px}.title{font-size:14px;white-space:nowrap}header a{display:none}.status{font-size:11px;white-space:nowrap}
+.layout{display:block}.side,.main{position:absolute;top:52px;bottom:0;left:0;right:0}.main{visibility:hidden;opacity:0;transition:opacity .18s;z-index:5}.side{z-index:4;border-right:0}
+body.open .main{visibility:visible;opacity:1}body.open .side{visibility:hidden}.back{display:inline-block}.bubble{max-width:89%}
+}
 </style>
 </head>
-<body><div class="app">
-<header>
-<div class="brand"><div class="logo">M</div><div><h1>Matrix AI — Mercado Livre</h1><small>Gestão financeira, perdas e oportunidades</small></div></div>
-<div class="controls">
-<a class="btn" href="/sac/perguntas">Perguntas ML</a>
-<a class="btn" href="/sac/central">Central SAC</a>
-<select id="days"><option value="7">7 dias</option><option value="30" selected>30 dias</option><option value="60">60 dias</option><option value="90">90 dias</option></select>
-<button id="refresh">Atualizar</button>
+<body>
+<div class="app">
+<header><div class="logo">M</div><div class="title">Matrix AI - Central SAC</div><a href="/sac/perguntas" style="margin-left:8px;color:#eef4ff;text-decoration:none;border:1px solid #22314b;border-radius:8px;padding:7px 9px;font-size:12px">Perguntas ML</a><div class="status">● ao vivo</div></header>
+<div class="layout">
+<section class="side">
+<div class="filters"><input id="q" placeholder="Buscar cliente..."><select id="f"><option value="">Todos</option><option value="review">Revisão</option><option value="urgent">Urgente</option></select></div>
+<div class="list" id="list"><div class="empty">Carregando atendimentos...</div></div>
+</section>
+<section class="main">
+<div class="head"><button class="back" id="back">‹</button><div class="who"><b id="who">Selecione uma conversa</b><small id="meta">Acompanhamento em tempo real</small></div></div>
+<div class="msgs" id="msgs"><div class="empty">Escolha uma conversa para acompanhar o que o cliente enviou e o que a IA respondeu.</div></div>
+<div class="composer">
+  <textarea id="reply" placeholder="Digite sua resposta..." disabled></textarea>
+  <button class="send" id="send" disabled>Enviar</button>
 </div>
-</header>
-
-<div class="section">
-<div class="sectionHead"><div><h2>Financeiro</h2><span class="muted">Dados reais; ausência de dado não vira lucro fictício.</span></div></div>
-<div class="grid kpis">
-<div class="card"><div class="label">Faturamento bruto</div><div class="value" id="gross">—</div><div class="sub">Vendas</div></div>
-<div class="card"><div class="label">Receita líquida</div><div class="value" id="net">—</div><div class="sub">Receita medida</div></div>
-<div class="card"><div class="label">Lucro / margem</div><div class="value" id="margin">—</div><div class="sub" id="marginSub">—</div></div>
-<div class="card"><div class="label">Taxas ML</div><div class="value warn" id="fees">—</div><div class="sub">Comissões/tarifas</div></div>
-<div class="card"><div class="label">Ads</div><div class="value warn" id="ads">—</div><div class="sub" id="acos">ACOS: —</div></div>
-<div class="card"><div class="label">Dinheiro perdido</div><div class="value bad" id="lost">—</div><div class="sub">Perdas medidas</div></div>
-</div>
-</div>
-
-<div class="section">
-<div class="sectionHead"><div><h2>Operação</h2></div></div>
-<div class="grid kpis">
-<div class="card"><div class="label">Pedidos</div><div class="value" id="orders">—</div></div>
-<div class="card"><div class="label">Unidades</div><div class="value" id="units">—</div></div>
-<div class="card"><div class="label">Ticket médio</div><div class="value" id="ticket">—</div></div>
-<div class="card"><div class="label">Frete</div><div class="value" id="shipping">—</div></div>
-<div class="card"><div class="label">Custo produto</div><div class="value" id="productCost">—</div></div>
-<div class="card"><div class="label">Devoluções</div><div class="value" id="returnsCount">—</div></div>
-</div>
-</div>
-
-<div class="section grid two">
-<div class="card ai"><div class="sectionHead"><div><h2>Matrix AI</h2><span class="muted">Onde você está perdendo dinheiro e o que atacar.</span></div></div><div id="insights"></div></div>
-<div class="card"><div class="sectionHead"><div><h2>Saúde da operação</h2></div></div><div class="score" id="health">—</div><div class="muted" id="healthText">Score com dados disponíveis.</div></div>
-</div>
-
-<div class="section grid two">
-<div class="card"><div class="sectionHead"><div><h2>Maiores perdas</h2></div></div><div class="scroll"><table><thead><tr><th>Tipo</th><th>Causa</th><th class="num">Eventos</th><th class="num">Perda</th></tr></thead><tbody id="lossRows"></tbody></table></div></div>
-<div class="card"><div class="sectionHead"><div><h2>Oportunidades</h2></div></div><div class="scroll"><table><thead><tr><th>Oportunidade</th><th>Status</th><th class="num">Ganho</th></tr></thead><tbody id="oppRows"></tbody></table></div></div>
-</div>
-
-<div class="section card"><div class="sectionHead"><div><h2>Devoluções</h2><span class="muted">Motivos e perdas.</span></div></div><div class="scroll"><table><thead><tr><th>Data</th><th>Pedido</th><th>Item</th><th>Motivo</th><th>Categoria IA</th><th class="num">Perda</th></tr></thead><tbody id="returnRows"></tbody></table></div></div>
-<div class="muted" style="text-align:center;padding:18px" id="foot">Matrix AI Commerce</div>
-</div>
+</section>
+</div></div>
 <script>
-const $=id=>document.getElementById(id),BRL=new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
-const money=v=>v==null||!Number.isFinite(Number(v))?"—":BRL.format(Number(v));
-const num=v=>v==null||!Number.isFinite(Number(v))?"—":new Intl.NumberFormat("pt-BR",{maximumFractionDigits:0}).format(Number(v));
+(()=>{
+const $=id=>document.getElementById(id);
+const S={rows:[],id:null,conversation:null,listSig:"",convSig:"",busy:false,sending:false};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-async function load(){try{const d=Number($("days").value),r=await fetch(`/api/analytics/executive?days=${d}`,{cache:"no-store"}),x=await r.json();if(!r.ok||x.sucesso===false)throw new Error(x.mensagem||`HTTP ${r.status}`);render(x)}catch(e){alert("Analytics: "+e.message)}}
-function render(x){const t=x.totals||{};$("gross").textContent=money(t.gross_revenue);$("net").textContent=money(t.net_revenue);$("fees").textContent=money(t.marketplace_fees);$("ads").textContent=money(t.ads_spend);$("orders").textContent=num(t.orders_count);$("units").textContent=num(t.units_sold);$("shipping").textContent=money(t.shipping_cost);$("productCost").textContent=money(t.product_cost);$("returnsCount").textContent=num((x.returns||[]).length);$("ticket").textContent=Number(t.orders_count)?money(Number(t.net_revenue||0)/Number(t.orders_count)):"—";
-const complete=t.profitability_complete!==false&&t.contribution_margin!=null;$("margin").textContent=complete?money(t.contribution_margin):"INCOMPLETO";$("marginSub").textContent=complete?`Margem ${Number(t.margin_percent||0).toFixed(2)}%`:"Faltam dados reais";$("lost").textContent=money(Number(t.returns_loss||0));$("acos").textContent="ACOS: "+((x.daily||[]).some(a=>a.acos_percent!=null)?Number((x.daily||[]).filter(a=>a.acos_percent!=null).at(-1)?.acos_percent||0).toFixed(2)+"%":"sem dado");
-$("health").textContent=x.health?.health_score==null?"—":Math.round(x.health.health_score)+"/100";$("healthText").textContent=x.health?.explanation?JSON.stringify(x.health.explanation):"Score com dados disponíveis.";
-const ins=x.insights||[];$("insights").innerHTML=ins.length?ins.slice(0,10).map(i=>`<div class="insight"><b>${esc(i.title||i.insight_type)}</b><p>${esc(i.summary||"")}</p>${i.recommendation?`<p><b>Ação:</b> ${esc(i.recommendation)}</p>`:""}</div>`).join(""):`<div class="empty">Nenhum insight aberto ou dados ainda incompletos.</div>`;
-$("lossRows").innerHTML=(x.losses||[]).length?(x.losses||[]).slice(0,20).map(r=>`<tr><td>${esc(r.loss_type||"evento")}</td><td>${esc(r.cause_category||"—")}</td><td class="num">${num(r.events_count)}</td><td class="num">${money(r.total_loss)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">Sem perdas consolidadas.</td></tr>`;
-$("oppRows").innerHTML=(x.opportunities||[]).length?(x.opportunities||[]).slice(0,20).map(r=>`<tr><td>${esc(r.title||r.opportunity_type||"Oportunidade")}</td><td>${esc(r.status||"open")}</td><td class="num">${money(r.expected_gain)}</td></tr>`).join(""):`<tr><td colspan="3" class="empty">Sem oportunidades registradas.</td></tr>`;
-$("returnRows").innerHTML=(x.returns||[]).length?(x.returns||[]).slice(0,100).map(r=>`<tr><td>${esc(String(r.opened_at||"").slice(0,10))}</td><td>${esc(r.marketplace_order_id||"—")}</td><td>${esc(r.item_id||"—")}</td><td>${esc(r.reason_text||"—")}</td><td>${esc(r.ai_reason_category||"—")}</td><td class="num">${money(r.total_loss)}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">Sem devoluções registradas.</td></tr>`;
-$("foot").textContent=`Conta ${x.account_id||"—"} • ${x.window_days||$("days").value} dias • ${new Date(x.trust?.generated_at||Date.now()).toLocaleString("pt-BR")}`}
-$("refresh").onclick=load;$("days").onchange=load;load();
-</script></body></html>
+const fmt=v=>{if(!v)return"";const d=new Date(v);return isNaN(d)? "":d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})};
+const name=c=>c.contact_name||c.buyer_nickname||c.external_user_id||c.phone_number||"Cliente";
+const prev=c=>c.last_message_text||c.last_message||c.summary||c.last_response_text||"Sem prévia";
+const sig=v=>{try{return JSON.stringify(v)}catch{return String(Date.now())}};
+async function get(url){const r=await fetch(url,{cache:"no-store"});const d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||("HTTP "+r.status));return d}
+async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});const d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||("HTTP "+r.status));return d}
+function renderList(){
+ const q=$("q").value.toLowerCase().trim(),f=$("f").value,box=$("list"),old=box.scrollTop;
+ const rows=S.rows.filter(c=>{const h=(name(c)+" "+prev(c)+" "+(c.external_user_id||"")).toLowerCase();if(q&&!h.includes(q))return false;if(f==="review"&&c.requires_review!==true)return false;if(f==="urgent"&&c.attention_level!=="urgent")return false;return true});
+ box.innerHTML=rows.length?rows.map(c=>`<div class="conv ${String(c.id)===String(S.id)?"active":""}" data-id="${esc(c.id)}"><div style="display:flex;justify-content:space-between;gap:8px"><span class="name">${esc(name(c))}</span><span class="time">${esc(fmt(c.last_message_at))}</span></div><div class="preview">${esc(prev(c))}</div></div>`).join(""):'<div class="empty">Nenhuma conversa encontrada.</div>';
+ box.scrollTop=old;document.querySelectorAll(".conv").forEach(el=>el.onclick=()=>openConv(el.dataset.id,true));
+}
+async function loadList(force=false){
+ const d=await get("/sac/central/live?limit=300");const rows=d.conversas||[];const s=sig(rows.map(c=>[c.id,c.last_message_at,prev(c),c.requires_review,c.attention_level,c.control_mode]));S.rows=rows;if(force||s!==S.listSig){S.listSig=s;renderList()}
+}
+async function openConv(id,manual=false){
+ if(manual){S.id=id;S.convSig="";document.body.classList.add("open");renderList();$("msgs").innerHTML='<div class="empty">Carregando conversa...</div>'}
+ const d=await get("/sac/central/conversation/"+encodeURIComponent(id)+"?limit=500");const m=d.mensagens||[];const c0=d.conversa||{};S.conversation=c0;const to=String(c0.external_user_id||c0.phone_number||c0.phone||c0.whatsapp||"").replace(/\D/g,"");const canSend=String(c0.channel||"").toLowerCase()==="whatsapp"&&Boolean(to);$("reply").disabled=!canSend;$("send").disabled=!canSend;$("reply").placeholder=canSend?"Digite sua resposta...":"Conversa sem número de WhatsApp válido.";const s=sig([d.conversa?.last_message_at,m.map(x=>[x.id,x.created_at,x.date_created,x.text,x.content,x.metadata])]);if(!manual&&s===S.convSig)return;S.convSig=s;
+ const c=d.conversa||{};$("who").textContent=name(c);$("meta").textContent=(c.channel||"canal")+" • "+(c.external_user_id||"")+" • "+(c.control_mode||"ai");
+ const box=$("msgs"),near=box.scrollHeight-box.scrollTop-box.clientHeight<120,old=box.scrollTop;
+ box.innerHTML=m.length?m.map(x=>{const out=x.direction==="outbound"||x.role==="assistant"||x.sender_role==="assistant";const a=x.transcription||x.image_analysis||x.video_analysis;return `<div class="bubble ${out?"out":"in"}"><div>${esc(x.text||x.content||"(mídia)")}</div>${a?`<div class="analysis">${esc(typeof a==="string"?a:JSON.stringify(a))}</div>`:""}<div class="meta">${out?"Matrix AI":"Cliente"} • ${esc(fmt(x.date_created||x.created_at))}</div></div>`}).join(""):'<div class="empty">Nenhuma mensagem registrada.</div>';
+ if(manual||near)box.scrollTop=box.scrollHeight;else box.scrollTop=old;
+}
+async function refresh(force=false){
+ if(S.busy)return;S.busy=true;try{await loadList(force);if(S.id)await openConv(S.id,false)}catch(e){console.error(e)}finally{S.busy=false}
+}
+
+async function sendReply(){
+ if(S.sending)return;
+ const text=$("reply").value.trim();
+ const c=S.conversation||{};
+ const row=(S.rows||[]).find(x=>String(x.id)===String(S.id))||{};
+ const to=String(
+   c.external_user_id||c.phone_number||c.phone||c.whatsapp||
+   row.external_user_id||row.phone_number||row.phone||row.whatsapp||""
+ ).replace(/\D/g,"");
+
+ if(!text){alert("Digite a mensagem.");return}
+ if(!S.id){alert("Selecione uma conversa.");return}
+ if(!to){alert("Não encontrei o número de WhatsApp desta conversa.");return}
+
+ S.sending=true;
+ $("send").disabled=true;
+ $("send").textContent="Enviando...";
+ try{
+   await post("/whatsapp/send",{to,message:text,conversation_id:S.id});
+   $("reply").value="";
+   S.convSig="";
+   await openConv(S.id,false);
+   await loadList(true);
+ }catch(e){
+   alert("Erro ao enviar: "+e.message);
+ }finally{
+   S.sending=false;
+   $("send").textContent="Enviar";
+   $("send").disabled=false;
+ }
+}
+$("send").onclick=sendReply;
+$("reply").addEventListener("keydown",e=>{
+ if(e.key==="Enter"&&!e.shiftKey){
+   e.preventDefault();
+   sendReply();
+ }
+});
+$("q").oninput=renderList;$("f").onchange=renderList;$("back").onclick=()=>document.body.classList.remove("open");
+refresh(true);
+setInterval(()=>refresh(false),8000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh(false)});
+})();
+</script>
+</body>
+</html>
