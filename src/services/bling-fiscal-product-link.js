@@ -4,13 +4,15 @@ const originalBlingFetch = blingService.blingFetch;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const productCache = new Map();
 
-// Estas são as descrições fiscais que a Matrix já gera a partir dos anúncios.
-// Em vez de manter NCM fixo no código, localizamos o produto cadastrado no
-// próprio Bling e usamos os dados fiscais desse cadastro como fonte oficial.
-const LINKED_FISCAL_PRODUCTS = new Set([
-  "gabinete gamer",
-  "gabinete officer"
+// Descrições fiscais geradas pela Matrix e aliases aceitos no cadastro do Bling.
+// "GABINETE OFFICER" ficou mantido por compatibilidade com o fluxo atual,
+// mas também aceitamos "GABINETE OFFICE", que é uma grafia comum no cadastro.
+const FISCAL_PRODUCT_ALIASES = new Map([
+  ["gabinete gamer", ["gabinete gamer"]],
+  ["gabinete officer", ["gabinete officer", "gabinete office"]]
 ]);
+
+const LINKED_FISCAL_PRODUCTS = new Set(FISCAL_PRODUCT_ALIASES.keys());
 
 function normalizeName(value) {
   return String(value || "")
@@ -42,74 +44,57 @@ function makeFiscalError(message, detail = null) {
   return error;
 }
 
-async function findRegisteredBlingProduct(description) {
-  const normalized = normalizeName(description);
-  const cached = productCache.get(normalized);
+function isActiveProduct(row) {
+  const status = String(row?.situacao ?? row?.status ?? "")
+    .trim()
+    .toUpperCase();
+  return status === "A" || status === "ATIVO" || status === "ACTIVE";
+}
 
-  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) {
-    return cached.product;
-  }
+function candidateScore(row, wanted, aliases) {
+  const name = normalizeName(row?.nome);
+  let score = 0;
 
+  if (name === wanted) score += 1000;
+  else if (aliases.includes(name)) score += 800;
+  else if (aliases.some(alias => name.includes(alias) || alias.includes(name))) score += 500;
+
+  if (isActiveProduct(row)) score += 100;
+  if (row?.codigo) score += 10;
+
+  return score;
+}
+
+async function searchProductsByName(name) {
   const params = new URLSearchParams({
     pagina: "1",
     limite: "100",
     criterio: "2",
     tipo: "P",
-    nome: description
+    nome: name
   });
 
-  const searchResponse = await originalBlingFetch(
+  const response = await originalBlingFetch(
     `/produtos?${params.toString()}`,
     { method: "GET" }
   );
-  const searchPayload = await readJson(searchResponse);
+  const payload = await readJson(response);
 
-  if (!searchResponse.ok) {
+  if (!response.ok) {
     const error = new Error(
-      `Bling recusou a busca do produto fiscal "${description}": ${JSON.stringify(searchPayload)}`
+      `Bling recusou a busca do produto fiscal "${name}": ${JSON.stringify(payload)}`
     );
-    error.httpStatus = searchResponse.status;
-    error.detail = searchPayload;
+    error.httpStatus = response.status;
+    error.detail = payload;
     throw error;
   }
 
-  const rows = Array.isArray(searchPayload?.data)
-    ? searchPayload.data
-    : [];
+  return Array.isArray(payload?.data) ? payload.data : [];
+}
 
-  const exact = rows.filter(
-    row => normalizeName(row?.nome) === normalized
-  );
-
-  let selected = null;
-
-  if (exact.length === 1) {
-    selected = exact[0];
-  } else if (exact.length > 1) {
-    // Se houver duplicados com o mesmo nome, privilegia um único ativo.
-    const active = exact.filter(
-      row => String(row?.situacao || "").toUpperCase() === "A"
-    );
-    if (active.length === 1) selected = active[0];
-  }
-
-  if (!selected) {
-    const close = rows.filter(row => {
-      const name = normalizeName(row?.nome);
-      return name.includes(normalized) || normalized.includes(name);
-    });
-    if (close.length === 1) selected = close[0];
-  }
-
-  if (!selected?.id) {
-    throw makeFiscalError(
-      `Produto fiscal "${description}" não foi localizado de forma única no cadastro do Bling. A NF-e não será criada até esse vínculo estar correto.`,
-      { encontrados: rows.map(row => ({ id: row?.id, nome: row?.nome, codigo: row?.codigo })) }
-    );
-  }
-
+async function fetchProductDetail(productId, description) {
   const detailResponse = await originalBlingFetch(
-    `/produtos/${encodeURIComponent(String(selected.id))}`,
+    `/produtos/${encodeURIComponent(String(productId))}`,
     { method: "GET" }
   );
   const detailPayload = await readJson(detailResponse);
@@ -123,35 +108,101 @@ async function findRegisteredBlingProduct(description) {
     throw error;
   }
 
-  const detail = detailPayload?.data || detailPayload || {};
-  const ncm = digitsOnly(detail?.tributacao?.ncm);
+  return detailPayload?.data || detailPayload || {};
+}
 
-  if (ncm.length !== 8) {
+async function findRegisteredBlingProduct(description) {
+  const normalized = normalizeName(description);
+  const cached = productCache.get(normalized);
+
+  if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) {
+    return cached.product;
+  }
+
+  const aliases = (FISCAL_PRODUCT_ALIASES.get(normalized) || [normalized])
+    .map(normalizeName)
+    .filter(Boolean);
+
+  // Pesquisa tanto pela descrição original quanto pelos aliases.
+  // Deduplicamos pelo ID porque o mesmo cadastro pode aparecer em mais de uma busca.
+  const candidatesById = new Map();
+
+  for (const alias of aliases) {
+    const rows = await searchProductsByName(alias);
+    for (const row of rows) {
+      if (row?.id == null) continue;
+      candidatesById.set(String(row.id), row);
+    }
+  }
+
+  const candidates = [...candidatesById.values()]
+    .map(row => ({
+      row,
+      score: candidateScore(row, normalized, aliases)
+    }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return Number(a.row?.id || 0) - Number(b.row?.id || 0);
+    });
+
+  if (!candidates.length) {
     throw makeFiscalError(
-      `O produto "${detail?.nome || description}" foi encontrado no Bling, mas o cadastro não possui um NCM válido de 8 dígitos.`,
-      { produto_id: detail?.id || selected.id, ncm: detail?.tributacao?.ncm || null }
+      `Produto fiscal "${description}" não foi localizado no cadastro do Bling. A NF-e não será criada até esse vínculo estar correto.`,
+      { aliases_procurados: aliases }
     );
   }
 
-  const product = {
-    id: String(detail?.id || selected.id),
-    nome: detail?.nome || selected?.nome || description,
-    codigo: detail?.codigo || selected?.codigo || null,
-    unidade: detail?.unidade || selected?.unidade || null,
-    ncm
-  };
+  // Não bloqueamos mais só porque existem duplicados com o mesmo nome.
+  // Tentamos, na ordem de melhor correspondência, o primeiro cadastro com NCM válido.
+  const invalidCandidates = [];
 
-  productCache.set(normalized, {
-    savedAt: Date.now(),
-    product
-  });
+  for (const candidate of candidates) {
+    const selected = candidate.row;
+    const detail = await fetchProductDetail(selected.id, description);
+    const ncm = digitsOnly(detail?.tributacao?.ncm);
 
-  return product;
+    if (ncm.length !== 8) {
+      invalidCandidates.push({
+        id: detail?.id || selected.id,
+        nome: detail?.nome || selected?.nome,
+        codigo: detail?.codigo || selected?.codigo || null,
+        ncm: detail?.tributacao?.ncm || null
+      });
+      continue;
+    }
+
+    const product = {
+      id: String(detail?.id || selected.id),
+      nome: detail?.nome || selected?.nome || description,
+      codigo: detail?.codigo || selected?.codigo || null,
+      unidade: detail?.unidade || selected?.unidade || null,
+      ncm
+    };
+
+    if (candidates.length > 1) {
+      console.warn(
+        `[Bling fiscal product] ${description}: ${candidates.length} candidatos encontrados; usando ID ${product.id} (${product.nome}).`
+      );
+    }
+
+    productCache.set(normalized, {
+      savedAt: Date.now(),
+      product
+    });
+
+    return product;
+  }
+
+  throw makeFiscalError(
+    `Os cadastros encontrados para "${description}" no Bling não possuem NCM válido de 8 dígitos.`,
+    { encontrados: invalidCandidates }
+  );
 }
 
 function isNfeCreateOrUpdate(path, options) {
   const method = String(options?.method || "GET").toUpperCase();
-  if (!['POST', 'PUT'].includes(method)) return false;
+  if (!["POST", "PUT"].includes(method)) return false;
 
   const cleanPath = String(path || "").split("?")[0];
   return cleanPath === "/nfe" || /^\/nfe\/[^/]+$/.test(cleanPath);
@@ -192,8 +243,8 @@ async function enrichNfeOptions(path, options = {}) {
     }
 
     // Replica pela API o que a Larissa faz na tela do Bling: parte da
-    // descrição, encontra o produto já cadastrado e passa a usar código,
-    // descrição, unidade e principalmente o NCM desse cadastro.
+    // descrição, encontra o produto já cadastrado e usa código, descrição,
+    // unidade e NCM desse cadastro.
     itens.push({
       ...item,
       codigo: product.codigo || item.codigo,
