@@ -52,6 +52,9 @@ app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
+// A V2 intercepta /fiscal/queue e /fiscal/sync-bling para reconhecer
+// NF-es já emitidas manualmente no Bling antes da Matrix.
+app.use(require("./src/routes/fiscal-queue-v2"));
 app.use(require("./src/routes/fiscal"));
 app.use(require("./src/routes/bling"));
 app.use(require("./src/routes/whatsapp"));
