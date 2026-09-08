@@ -14,6 +14,11 @@ const FISCAL_PRODUCT_ALIASES = new Map([
 
 const LINKED_FISCAL_PRODUCTS = new Set(FISCAL_PRODUCT_ALIASES.keys());
 
+// Código interno usado pela Shop Matrix no Bling para os itens fiscais.
+// Atenção: este campo é o CÓDIGO DO PRODUTO exibido no DANFE; ele não altera
+// o CFOP tributário da operação, que continua sendo definido pela Natureza de Operação.
+const MATRIX_FISCAL_ITEM_CODE = "CFOP5102";
+
 function normalizeName(value) {
   return String(value || "")
     .normalize("NFD")
@@ -53,6 +58,7 @@ function isActiveProduct(row) {
 
 function candidateScore(row, wanted, aliases) {
   const name = normalizeName(row?.nome);
+  const code = String(row?.codigo || "").trim().toUpperCase();
   let score = 0;
 
   if (name === wanted) score += 1000;
@@ -60,7 +66,8 @@ function candidateScore(row, wanted, aliases) {
   else if (aliases.some(alias => name.includes(alias) || alias.includes(name))) score += 500;
 
   if (isActiveProduct(row)) score += 100;
-  if (row?.codigo) score += 10;
+  if (code === MATRIX_FISCAL_ITEM_CODE) score += 10000;
+  else if (row?.codigo) score += 10;
 
   return score;
 }
@@ -175,14 +182,14 @@ async function findRegisteredBlingProduct(description) {
     const product = {
       id: String(detail?.id || selected.id),
       nome: detail?.nome || selected?.nome || description,
-      codigo: detail?.codigo || selected?.codigo || null,
+      codigo: MATRIX_FISCAL_ITEM_CODE,
       unidade: detail?.unidade || selected?.unidade || null,
       ncm
     };
 
     if (candidates.length > 1) {
       console.warn(
-        `[Bling fiscal product] ${description}: ${candidates.length} candidatos encontrados; usando ID ${product.id} (${product.nome}).`
+        `[Bling fiscal product] ${description}: ${candidates.length} candidatos encontrados; usando ID ${product.id} (${product.nome}) com código ${MATRIX_FISCAL_ITEM_CODE}.`
       );
     }
 
@@ -242,12 +249,11 @@ async function enrichNfeOptions(path, options = {}) {
       resolved.set(normalized, product);
     }
 
-    // Replica pela API o que a Larissa faz na tela do Bling: parte da
-    // descrição, encontra o produto já cadastrado e usa código, descrição,
-    // unidade e NCM desse cadastro.
+    // Replica pela API o cadastro fiscal usado pela Shop Matrix no Bling.
+    // Nunca deixa o SKU/MLB do Mercado Livre escapar para o campo Código do DANFE.
     itens.push({
       ...item,
-      codigo: product.codigo || item.codigo,
+      codigo: MATRIX_FISCAL_ITEM_CODE,
       descricao: product.nome,
       unidade: product.unidade || item.unidade || "UN",
       ncm: product.ncm
