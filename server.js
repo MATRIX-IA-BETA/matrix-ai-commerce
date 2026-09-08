@@ -4,15 +4,18 @@ const path = require("path");
 const { env } = require("./src/config/env");
 const { supabase } = require("./src/db/supabase");
 const { createAnalyticsRouter } = require("./src/routes/analytics");
-const { installBlingFiscalProductLink } = require("./src/services/bling-fiscal-product-link");
+const { installBlingNfeRequiredFields } = require("./src/services/bling-nfe-required-fields");
 
 const app = express();
 
 app.use(express.json({ limit: "2mb" }));
 
-// Para NF-e de PC, resolve GABINETE GAMER/OFFICER no cadastro do Bling
-// antes do POST/PUT da nota. O NCM passa a vir do produto cadastrado no ERP,
-// em vez de depender do NCM fixo que existia no payload da Matrix.
+// Primeiro instala a camada que completa cabeçalho fiscal/pagamento usando
+// uma NF-e autorizada da própria conta como referência. Depois carregamos o
+// vínculo do produto fiscal; assim ele acrescenta NCM e a camada anterior
+// também consegue espelhar o NCM no campo classificacaoFiscal da API.
+installBlingNfeRequiredFields();
+const { installBlingFiscalProductLink } = require("./src/services/bling-fiscal-product-link");
 installBlingFiscalProductLink();
 
 // =========================================================
