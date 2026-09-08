@@ -52,10 +52,17 @@ app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
-// A V2 intercepta /fiscal/queue e /fiscal/sync-bling para reconhecer
-// NF-es já emitidas manualmente no Bling antes da Matrix.
+
+// V3: prioriza CPF/CNPJ do billing-info do Mercado Livre para localizar
+// NF-es que já foram emitidas manualmente no Bling.
+app.use(require("./src/routes/fiscal-cpf-sync-v3"));
+
+// Mantida como fallback para compatibilidade com as rotas fiscais anteriores.
 app.use(require("./src/routes/fiscal-queue-v2"));
 app.use(require("./src/routes/fiscal"));
+
+// Corrige o download DANFE/XML usando a rota oficial atual do Bling.
+app.use(require("./src/routes/bling-documents-v2"));
 app.use(require("./src/routes/bling"));
 app.use(require("./src/routes/whatsapp"));
 
