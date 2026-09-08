@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const { blingFetch } = require("../services/bling");
+const { supabase } = require("../db/supabase");
 
 function digitsOnly(value) {
   return String(value ?? "").replace(/\D/g, "");
@@ -14,7 +15,7 @@ function isPdf(bytes) {
 function isXml(bytes) {
   if (!Buffer.isBuffer(bytes) || !bytes.length) return false;
   const head = bytes
-    .subarray(0, Math.min(bytes.length, 500))
+    .subarray(0, Math.min(bytes.length, 1000))
     .toString("utf8")
     .replace(/^\uFEFF/, "")
     .trimStart();
@@ -23,7 +24,9 @@ function isXml(bytes) {
     head.startsWith("<?xml") ||
     head.startsWith("<nfeProc") ||
     head.startsWith("<NFe") ||
-    head.startsWith("<procNFe")
+    head.startsWith("<procNFe") ||
+    head.includes("<nfeProc") ||
+    head.includes("<NFe")
   );
 }
 
@@ -68,31 +71,8 @@ function collectStrings(value, out = [], depth = 0) {
   }
 
   if (typeof value === "object") {
-    const preferred = [
-      "url",
-      "link",
-      "href",
-      "download",
-      "documento",
-      "arquivo",
-      "pdf",
-      "xml",
-      "conteudo",
-      "content",
-      "base64",
-      "data"
-    ];
-
-    for (const key of preferred) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
-        collectStrings(value[key], out, depth + 1);
-      }
-    }
-
-    for (const [key, child] of Object.entries(value)) {
-      if (!preferred.includes(key)) {
-        collectStrings(child, out, depth + 1);
-      }
+    for (const child of Object.values(value)) {
+      collectStrings(child, out, depth + 1);
     }
   }
 
@@ -103,7 +83,7 @@ function decodePossibleBase64(value, format) {
   const raw = String(value || "").trim();
   if (!raw) return null;
 
-  const dataUri = raw.match(/^data:[^;]+;base64,(.+)$/i);
+  const dataUri = raw.match(/^data:[^;]+;base64,(.+)$/is);
   const candidate = dataUri ? dataUri[1] : raw;
 
   if (
@@ -114,52 +94,58 @@ function decodePossibleBase64(value, format) {
   }
 
   try {
-    const bytes = Buffer.from(
-      candidate.replace(/\s+/g, ""),
-      "base64"
-    );
+    const bytes = Buffer.from(candidate.replace(/\s+/g, ""), "base64");
     return isValidDocument(bytes, format) ? bytes : null;
   } catch {
     return null;
   }
 }
 
-async function fetchDocumentUrl(url, format) {
-  let parsed;
+function safeHttpsUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+
   try {
-    parsed = new URL(url);
+    const parsed = new URL(text);
+    return parsed.protocol === "https:" ? parsed.toString() : null;
   } catch {
     return null;
   }
+}
 
-  if (parsed.protocol !== "https:") return null;
+async function fetchDocumentUrl(url, format) {
+  const safeUrl = safeHttpsUrl(url);
+  if (!safeUrl) return null;
 
-  const response = await fetch(parsed.toString(), {
-    method: "GET",
-    redirect: "follow",
-    headers: {
-      Accept: acceptFor(format)
-    }
-  });
+  try {
+    const response = await fetch(safeUrl, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        Accept: acceptFor(format),
+        "User-Agent": "Matrix-AI-Commerce/1.0"
+      }
+    });
 
-  if (!response.ok) return null;
+    if (!response.ok) return null;
 
-  const bytes = Buffer.from(await response.arrayBuffer());
-  return isValidDocument(bytes, format) ? bytes : null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return isValidDocument(bytes, format) ? bytes : null;
+  } catch {
+    return null;
+  }
 }
 
 async function resolveDocumentFromJson(json, format) {
   const strings = collectStrings(json);
 
-  // Algumas respostas do Bling podem devolver link assinado/temporário.
   for (const value of strings) {
-    if (/^https:\/\//i.test(value.trim())) {
-      const bytes = await fetchDocumentUrl(value.trim(), format);
-      if (bytes) return bytes;
-    }
+    const url = safeHttpsUrl(value);
+    if (!url) continue;
+    const bytes = await fetchDocumentUrl(url, format);
+    if (bytes) return bytes;
   }
 
-  // Fallback para conteúdo/base64 dentro do JSON.
   for (const value of strings) {
     const bytes = decodePossibleBase64(value, format);
     if (bytes) return bytes;
@@ -176,6 +162,86 @@ function blingErrorFromJson(json) {
     json?.error?.description ||
     null
   );
+}
+
+async function getFiscalDocumentByKey(key) {
+  const { data, error } = await supabase
+    .from("fiscal_documents")
+    .select("bling_nfe_id,nfe_pdf_url")
+    .eq("nfe_access_key", key)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[DANFE] Falha buscando NF-e local:", error.message);
+    return null;
+  }
+
+  return data || null;
+}
+
+async function getNfeDetail(id) {
+  if (!id) return null;
+
+  try {
+    const response = await blingFetch(
+      `/nfe/${encodeURIComponent(String(id))}`,
+      { method: "GET" }
+    );
+
+    const text = await response.text();
+    if (!response.ok || !text) return null;
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function resolveFromKnownNfe(key, format) {
+  const fiscal = await getFiscalDocumentByKey(key);
+  if (!fiscal) return null;
+
+  const candidates = [];
+
+  if (format === "pdf" && fiscal.nfe_pdf_url) {
+    candidates.push(fiscal.nfe_pdf_url);
+  }
+
+  if (fiscal.bling_nfe_id) {
+    const detail = await getNfeDetail(fiscal.bling_nfe_id);
+    const d = detail?.data || detail || {};
+
+    if (format === "pdf") {
+      // linkPDF primeiro: tende a apontar para o arquivo PDF real.
+      candidates.push(d.linkPDF, d.linkDanfe, d.danfe);
+    } else {
+      candidates.push(d.linkXml, d.linkXML, d.xml);
+    }
+  }
+
+  for (const candidate of candidates.filter(Boolean)) {
+    const bytes = await fetchDocumentUrl(candidate, format);
+    if (bytes) return bytes;
+  }
+
+  return null;
+}
+
+function sendDocument(res, key, format, documentBytes) {
+  res.set({
+    "Content-Type": contentTypeFor(format),
+    "Content-Disposition": `attachment; filename="NFe-${key}.${format}"`,
+    "Content-Length": String(documentBytes.length),
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff"
+  });
+
+  return res.send(documentBytes);
 }
 
 router.get("/bling/nfe/document/:key/:format", async (req, res) => {
@@ -197,6 +263,13 @@ router.get("/bling/nfe/document/:key/:format", async (req, res) => {
       });
     }
 
+    // Para notas já sincronizadas, prioriza os links oficiais da própria NF-e.
+    const knownBytes = await resolveFromKnownNfe(key, format);
+    if (knownBytes) {
+      return sendDocument(res, key, format, knownBytes);
+    }
+
+    // Fallback para a rota específica por chave criada pelo Bling em 2026.
     const upstream = await blingFetch(
       `/nfe/documento/${encodeURIComponent(key)}?formato=${encodeURIComponent(format)}`,
       {
@@ -229,37 +302,35 @@ router.get("/bling/nfe/document/:key/:format", async (req, res) => {
       documentBytes = await resolveDocumentFromJson(json, format);
     }
 
-    // Não salva mais JSON/HTML fingindo ser PDF. Se o Bling não entregar
-    // um arquivo real, retorna diagnóstico legível no navegador.
     if (!documentBytes) {
-      const contentType =
-        upstream.headers.get("content-type") || "desconhecido";
-      const preview = rawBytes
-        .toString("utf8")
-        .replace(/\s+/g, " ")
-        .slice(0, 280);
-
-      return res.status(502).json({
-        sucesso: false,
-        mensagem:
-          "O Bling respondeu ao pedido de download, mas não entregou um PDF/XML válido.",
-        diagnostico: {
-          content_type: contentType,
-          bytes: rawBytes.length,
-          preview
-        }
-      });
+      const rawText = rawBytes.toString("utf8").trim();
+      const directUrl = safeHttpsUrl(rawText);
+      if (directUrl) {
+        documentBytes = await fetchDocumentUrl(directUrl, format);
+      }
     }
 
-    res.set({
-      "Content-Type": contentTypeFor(format),
-      "Content-Disposition": `attachment; filename="NFe-${key}.${format}"`,
-      "Content-Length": String(documentBytes.length),
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff"
-    });
+    if (documentBytes) {
+      return sendDocument(res, key, format, documentBytes);
+    }
 
-    return res.send(documentBytes);
+    const contentType = upstream.headers.get("content-type") || "desconhecido";
+    const preview = rawBytes
+      .toString("utf8")
+      .replace(/\s+/g, " ")
+      .slice(0, 320);
+
+    return res.status(502).json({
+      sucesso: false,
+      mensagem:
+        `O Bling respondeu, mas não entregou um ${format.toUpperCase()} válido. ` +
+        `Tipo: ${contentType}; ${rawBytes.length} bytes; início: ${preview || "(vazio)"}`,
+      diagnostico: {
+        content_type: contentType,
+        bytes: rawBytes.length,
+        preview
+      }
+    });
   } catch (error) {
     return res.status(error.httpStatus || 500).json({
       sucesso: false,
