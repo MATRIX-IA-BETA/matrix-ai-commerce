@@ -1,5 +1,6 @@
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
 
 const { env } = require("./src/config/env");
 const { installBlingRateLimitGuard } = require("./src/services/bling-rate-limit");
@@ -39,32 +40,56 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
+const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=1">\n<script defer src="/matrix-global-nav.js?v=1"></script>\n`;
 
-app.use(express.static(PUBLIC_DIR));
+function sendMatrixPage(fileName) {
+  return (req, res, next) => {
+    const filePath = path.join(PUBLIC_DIR, fileName);
 
-function sendPublicFile(fileName) {
-  return (req, res) => {
-    res.set({
-      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-      Pragma: "no-cache",
-      Expires: "0"
+    fs.readFile(filePath, "utf8", (error, source) => {
+      if (error) return next(error);
+
+      const html = source.includes("matrix-global-nav.css")
+        ? source
+        : source.replace("</head>", `${MATRIX_NAV_ASSETS}</head>`);
+
+      res.set({
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0"
+      });
+
+      res.type("html").send(html);
     });
-    res.sendFile(path.join(PUBLIC_DIR, fileName));
   };
 }
 
-// Central SAC WhatsApp
-app.get("/sac/central", sendPublicFile("sac-central.html"));
-app.get("/sac/mobile", sendPublicFile("sac-central.html"));
-app.get("/sac/mobile.html", sendPublicFile("sac-central.html"));
+// Home / hub principal Matrix AI.
+app.get("/", sendMatrixPage("index.html"));
+app.get("/index.html", sendMatrixPage("index.html"));
 
-// SAC - Perguntas Mercado Livre
-app.get("/sac/perguntas", sendPublicFile("mercadolivre-perguntas.html"));
-app.get("/sac/perguntas-ml", sendPublicFile("mercadolivre-perguntas.html"));
+// Central Fiscal.
+app.get("/fiscal-nfe.html", sendMatrixPage("fiscal-nfe.html"));
 
-// Painel executivo Mercado Livre
-app.get("/mercadolivre", sendPublicFile("mercadolivre-painel.html"));
-app.get("/painel/mercadolivre", sendPublicFile("mercadolivre-painel.html"));
+// Central SAC WhatsApp.
+app.get("/sac/central", sendMatrixPage("sac-central.html"));
+app.get("/sac/mobile", sendMatrixPage("sac-central.html"));
+app.get("/sac/mobile.html", sendMatrixPage("sac-central.html"));
+app.get("/sac-central.html", sendMatrixPage("sac-central.html"));
+
+// SAC - Perguntas Mercado Livre.
+app.get("/sac/perguntas", sendMatrixPage("mercadolivre-perguntas.html"));
+app.get("/sac/perguntas-ml", sendMatrixPage("mercadolivre-perguntas.html"));
+app.get("/mercadolivre-perguntas.html", sendMatrixPage("mercadolivre-perguntas.html"));
+
+// Painel executivo Mercado Livre.
+app.get("/mercadolivre", sendMatrixPage("mercadolivre-painel.html"));
+app.get("/painel/mercadolivre", sendMatrixPage("mercadolivre-painel.html"));
+app.get("/mercadolivre-painel.html", sendMatrixPage("mercadolivre-painel.html"));
+
+// Arquivos estáticos auxiliares (CSS/JS/etc.). O index fica desativado aqui
+// porque a rota / acima injeta a navegação global antes de entregar a home.
+app.use(express.static(PUBLIC_DIR, { index: false }));
 
 // =========================================================
 // ROTAS EXISTENTES
