@@ -2,10 +2,17 @@ const express = require("express");
 const path = require("path");
 
 const { env } = require("./src/config/env");
+const { installBlingRateLimitGuard } = require("./src/services/bling-rate-limit");
 const { supabase } = require("./src/db/supabase");
 const { createAnalyticsRouter } = require("./src/routes/analytics");
 const { installBlingNfeParcelDateGuard } = require("./src/services/bling-nfe-parcel-date-guard");
 const { installBlingNfeRequiredFields } = require("./src/services/bling-nfe-required-fields");
+
+// Todas as chamadas para a API do Bling passam por uma fila única, com
+// espaçamento mínimo entre requisições e retry automático quando houver 429.
+// Isso evita que sync de histórico, consulta de contato/produto e emissão de
+// NF-e estourem juntos o limite por segundo da API.
+installBlingRateLimitGuard();
 
 const app = express();
 
