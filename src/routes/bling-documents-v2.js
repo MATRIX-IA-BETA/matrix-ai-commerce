@@ -5,20 +5,177 @@ function digitsOnly(value) {
   return String(value ?? "").replace(/\D/g, "");
 }
 
-async function readError(response) {
-  const text = await response.text();
-  if (!text) return `HTTP ${response.status}`;
+function isPdf(bytes) {
+  return Buffer.isBuffer(bytes) &&
+    bytes.length >= 5 &&
+    bytes.subarray(0, 5).toString("ascii") === "%PDF-";
+}
+
+function isXml(bytes) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length) return false;
+  const head = bytes
+    .subarray(0, Math.min(bytes.length, 500))
+    .toString("utf8")
+    .replace(/^\uFEFF/, "")
+    .trimStart();
+
+  return (
+    head.startsWith("<?xml") ||
+    head.startsWith("<nfeProc") ||
+    head.startsWith("<NFe") ||
+    head.startsWith("<procNFe")
+  );
+}
+
+function isValidDocument(bytes, format) {
+  return format === "pdf" ? isPdf(bytes) : isXml(bytes);
+}
+
+function contentTypeFor(format) {
+  return format === "pdf"
+    ? "application/pdf"
+    : "application/xml; charset=utf-8";
+}
+
+function acceptFor(format) {
+  return format === "pdf"
+    ? "application/pdf, application/octet-stream;q=0.9, */*;q=0.8"
+    : "application/xml, text/xml, application/octet-stream;q=0.9, */*;q=0.8";
+}
+
+function tryParseJson(bytes) {
+  if (!bytes?.length) return null;
+  const text = bytes.toString("utf8").trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return null;
   try {
-    const json = JSON.parse(text);
-    return (
-      json?.error?.message ||
-      json?.message ||
-      json?.mensagem ||
-      text
-    );
+    return JSON.parse(text);
   } catch {
-    return text;
+    return null;
   }
+}
+
+function collectStrings(value, out = [], depth = 0) {
+  if (depth > 8 || value == null) return out;
+
+  if (typeof value === "string") {
+    out.push(value);
+    return out;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectStrings(item, out, depth + 1);
+    return out;
+  }
+
+  if (typeof value === "object") {
+    const preferred = [
+      "url",
+      "link",
+      "href",
+      "download",
+      "documento",
+      "arquivo",
+      "pdf",
+      "xml",
+      "conteudo",
+      "content",
+      "base64",
+      "data"
+    ];
+
+    for (const key of preferred) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        collectStrings(value[key], out, depth + 1);
+      }
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      if (!preferred.includes(key)) {
+        collectStrings(child, out, depth + 1);
+      }
+    }
+  }
+
+  return out;
+}
+
+function decodePossibleBase64(value, format) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const dataUri = raw.match(/^data:[^;]+;base64,(.+)$/i);
+  const candidate = dataUri ? dataUri[1] : raw;
+
+  if (
+    !dataUri &&
+    (candidate.length < 80 || !/^[A-Za-z0-9+/=\r\n]+$/.test(candidate))
+  ) {
+    return null;
+  }
+
+  try {
+    const bytes = Buffer.from(
+      candidate.replace(/\s+/g, ""),
+      "base64"
+    );
+    return isValidDocument(bytes, format) ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchDocumentUrl(url, format) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:") return null;
+
+  const response = await fetch(parsed.toString(), {
+    method: "GET",
+    redirect: "follow",
+    headers: {
+      Accept: acceptFor(format)
+    }
+  });
+
+  if (!response.ok) return null;
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return isValidDocument(bytes, format) ? bytes : null;
+}
+
+async function resolveDocumentFromJson(json, format) {
+  const strings = collectStrings(json);
+
+  // Algumas respostas do Bling podem devolver link assinado/temporário.
+  for (const value of strings) {
+    if (/^https:\/\//i.test(value.trim())) {
+      const bytes = await fetchDocumentUrl(value.trim(), format);
+      if (bytes) return bytes;
+    }
+  }
+
+  // Fallback para conteúdo/base64 dentro do JSON.
+  for (const value of strings) {
+    const bytes = decodePossibleBase64(value, format);
+    if (bytes) return bytes;
+  }
+
+  return null;
+}
+
+function blingErrorFromJson(json) {
+  return (
+    json?.error?.message ||
+    json?.message ||
+    json?.mensagem ||
+    json?.error?.description ||
+    null
+  );
 }
 
 router.get("/bling/nfe/document/:key/:format", async (req, res) => {
@@ -42,32 +199,69 @@ router.get("/bling/nfe/document/:key/:format", async (req, res) => {
 
     const upstream = await blingFetch(
       `/nfe/documento/${encodeURIComponent(key)}?formato=${encodeURIComponent(format)}`,
-      { method: "GET" }
+      {
+        method: "GET",
+        headers: {
+          Accept: acceptFor(format)
+        }
+      }
     );
 
+    const rawBytes = Buffer.from(await upstream.arrayBuffer());
+    const json = tryParseJson(rawBytes);
+
     if (!upstream.ok) {
-      const detail = await readError(upstream);
+      const detail = json
+        ? blingErrorFromJson(json) || JSON.stringify(json)
+        : rawBytes.toString("utf8").slice(0, 1000);
+
       return res.status(upstream.status).json({
         sucesso: false,
-        mensagem: `Bling recusou o download da NF-e: ${detail}`
+        mensagem: `Bling recusou o download da NF-e: ${detail || `HTTP ${upstream.status}`}`
       });
     }
 
-    const bytes = Buffer.from(await upstream.arrayBuffer());
-    const contentType =
-      upstream.headers.get("content-type") ||
-      (format === "pdf" ? "application/pdf" : "application/xml; charset=utf-8");
+    let documentBytes = isValidDocument(rawBytes, format)
+      ? rawBytes
+      : null;
+
+    if (!documentBytes && json) {
+      documentBytes = await resolveDocumentFromJson(json, format);
+    }
+
+    // Não salva mais JSON/HTML fingindo ser PDF. Se o Bling não entregar
+    // um arquivo real, retorna diagnóstico legível no navegador.
+    if (!documentBytes) {
+      const contentType =
+        upstream.headers.get("content-type") || "desconhecido";
+      const preview = rawBytes
+        .toString("utf8")
+        .replace(/\s+/g, " ")
+        .slice(0, 280);
+
+      return res.status(502).json({
+        sucesso: false,
+        mensagem:
+          "O Bling respondeu ao pedido de download, mas não entregou um PDF/XML válido.",
+        diagnostico: {
+          content_type: contentType,
+          bytes: rawBytes.length,
+          preview
+        }
+      });
+    }
 
     res.set({
-      "Content-Type": contentType,
+      "Content-Type": contentTypeFor(format),
       "Content-Disposition": `attachment; filename="NFe-${key}.${format}"`,
-      "Content-Length": String(bytes.length),
-      "Cache-Control": "private, no-store"
+      "Content-Length": String(documentBytes.length),
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff"
     });
 
-    res.send(bytes);
+    return res.send(documentBytes);
   } catch (error) {
-    res.status(error.httpStatus || 500).json({
+    return res.status(error.httpStatus || 500).json({
       sucesso: false,
       mensagem: error.message
     });
