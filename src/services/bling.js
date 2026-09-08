@@ -174,6 +174,10 @@ function normalizeUf(value) {
   return undefined;
 }
 
+function normalizeDocument(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
 function buildGeneralAddress(customer) {
   const general = {
     endereco: customer.address_line || undefined,
@@ -191,10 +195,149 @@ function buildGeneralAddress(customer) {
   );
 }
 
+async function readBlingJson(response) {
+  const text = await response.text();
+
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+function isDuplicateDocumentError(data) {
+  const fields =
+    data?.error?.fields ||
+    data?.fields ||
+    [];
+
+  if (
+    Array.isArray(fields) &&
+    fields.some(field =>
+      /(?:CPF|CNPJ).+já está cadastrado/i.test(String(field?.msg || ""))
+    )
+  ) {
+    return true;
+  }
+
+  return /(?:CPF|CNPJ).+já está cadastrado/i.test(
+    JSON.stringify(data || {})
+  );
+}
+
+async function findBlingContactByDocument(documentNumber) {
+  const document = normalizeDocument(documentNumber);
+
+  if (!document) return null;
+
+  const params = new URLSearchParams({
+    pagina: "1",
+    limite: "100",
+    criterio: "1",
+    numeroDocumento: document
+  });
+
+  const response = await blingFetch(
+    `/contatos?${params.toString()}`,
+    { method: "GET" }
+  );
+
+  const data = await readBlingJson(response);
+
+  if (!response.ok) {
+    const e = new Error(
+      `Erro procurando contato por CPF/CNPJ no Bling: ${JSON.stringify(data)}`
+    );
+    e.httpStatus = response.status;
+    e.detail = data;
+    throw e;
+  }
+
+  const rows = Array.isArray(data?.data) ? data.data : [];
+
+  return (
+    rows.find(
+      row => normalizeDocument(row?.numeroDocumento) === document
+    ) ||
+    rows[0] ||
+    null
+  );
+}
+
+async function saveCustomerBlingContactId(customer, blingId) {
+  const normalizedId = String(blingId);
+
+  if (String(customer?.bling_contact_id || "") === normalizedId) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("customers")
+    .update({
+      bling_contact_id: normalizedId,
+      updated_at: nowIso()
+    })
+    .eq("id", customer.id);
+
+  if (error) {
+    throw new Error(
+      `Contato localizado no Bling, mas falhou ao salvar bling_contact_id na Matrix: ${error.message}`
+    );
+  }
+
+  customer.bling_contact_id = normalizedId;
+}
+
+async function updateBlingContact(contactId, payload) {
+  const response = await blingFetch(
+    `/contatos/${encodeURIComponent(String(contactId))}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }
+  );
+
+  const data = await readBlingJson(response);
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    data
+  };
+}
+
+async function useContactFoundByDocument(customer, contact, payload) {
+  const contactId = contact?.id;
+
+  if (!contactId) {
+    throw new Error(
+      "Bling retornou um contato para o CPF/CNPJ, mas sem ID."
+    );
+  }
+
+  const updated = await updateBlingContact(contactId, payload);
+
+  if (!updated.ok) {
+    const e = new Error(
+      `Erro atualizando contato correto no Bling: ${JSON.stringify(updated.data)}`
+    );
+    e.httpStatus = updated.status;
+    e.detail = updated.data;
+    throw e;
+  }
+
+  await saveCustomerBlingContactId(customer, contactId);
+
+  return String(contactId);
+}
+
 async function createOrUpdateBlingContact(customer) {
   const generalAddress = buildGeneralAddress(customer);
+  const document = normalizeDocument(customer.document_number);
 
-  if (!customer.document_number) {
+  if (!document) {
     const e = new Error(
       "Cliente sem CPF/CNPJ. O contato não será enviado ao Bling e a NF-e não será criada."
     );
@@ -206,7 +349,7 @@ async function createOrUpdateBlingContact(customer) {
     nome: customer.name || "Cliente Mercado Livre",
     situacao: "A",
     tipo: customer.document_type === "CNPJ" ? "J" : "F",
-    numeroDocumento: String(customer.document_number).replace(/\D/g, ""),
+    numeroDocumento: document,
     email: customer.email || undefined,
     celular: customer.phone || undefined,
     endereco:
@@ -217,36 +360,47 @@ async function createOrUpdateBlingContact(customer) {
 
   const cleanPayload = JSON.parse(JSON.stringify(payload));
 
+  // Antes de criar/atualizar, procura pelo CPF/CNPJ. Se o contato já
+  // existe no Bling, ele é a referência correta e a Matrix reaponta o ID.
+  const contactByDocument = await findBlingContactByDocument(document);
+
+  if (contactByDocument?.id) {
+    return useContactFoundByDocument(
+      customer,
+      contactByDocument,
+      cleanPayload
+    );
+  }
+
   if (customer.bling_contact_id) {
     const existingId = String(customer.bling_contact_id);
-
-    const updateResponse = await blingFetch(
-      `/contatos/${encodeURIComponent(existingId)}`,
-      {
-        method: "PUT",
-        body: JSON.stringify(cleanPayload)
-      }
+    const updated = await updateBlingContact(
+      existingId,
+      cleanPayload
     );
 
-    const updateText = await updateResponse.text();
-    let updateData = {};
-
-    try {
-      updateData = updateText ? JSON.parse(updateText) : {};
-    } catch {
-      updateData = { raw: updateText };
-    }
-
-    if (updateResponse.ok) {
+    if (updated.ok) {
       return existingId;
     }
 
-    if (updateResponse.status !== 404) {
+    if (isDuplicateDocumentError(updated.data)) {
+      const recovered = await findBlingContactByDocument(document);
+
+      if (recovered?.id) {
+        return useContactFoundByDocument(
+          customer,
+          recovered,
+          cleanPayload
+        );
+      }
+    }
+
+    if (updated.status !== 404) {
       const e = new Error(
-        `Erro atualizando contato no Bling: ${JSON.stringify(updateData)}`
+        `Erro atualizando contato no Bling: ${JSON.stringify(updated.data)}`
       );
-      e.httpStatus = updateResponse.status;
-      e.detail = updateData;
+      e.httpStatus = updated.status;
+      e.detail = updated.data;
       throw e;
     }
   }
@@ -256,16 +410,21 @@ async function createOrUpdateBlingContact(customer) {
     body: JSON.stringify(cleanPayload)
   });
 
-  const text = await response.text();
-  let data = {};
-
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
+  const data = await readBlingJson(response);
 
   if (!response.ok) {
+    if (isDuplicateDocumentError(data)) {
+      const recovered = await findBlingContactByDocument(document);
+
+      if (recovered?.id) {
+        return useContactFoundByDocument(
+          customer,
+          recovered,
+          cleanPayload
+        );
+      }
+    }
+
     const e = new Error(
       `Erro criando contato no Bling: ${JSON.stringify(data)}`
     );
@@ -282,19 +441,7 @@ async function createOrUpdateBlingContact(customer) {
     );
   }
 
-  const { error: updateError } = await supabase
-    .from("customers")
-    .update({
-      bling_contact_id: String(blingId),
-      updated_at: nowIso()
-    })
-    .eq("id", customer.id);
-
-  if (updateError) {
-    throw new Error(
-      `Contato criado no Bling, mas falhou ao salvar bling_contact_id na Matrix: ${updateError.message}`
-    );
-  }
+  await saveCustomerBlingContactId(customer, blingId);
 
   return String(blingId);
 }
@@ -306,5 +453,6 @@ module.exports = {
   refreshBlingToken,
   ensureValidBlingAccount,
   blingFetch,
-  createOrUpdateBlingContact
+  createOrUpdateBlingContact,
+  findBlingContactByDocument
 };
