@@ -63,6 +63,11 @@ app.use(require("./src/routes/fiscal"));
 
 // Corrige o download DANFE/XML usando a rota oficial atual do Bling.
 app.use(require("./src/routes/bling-documents-v2"));
+
+// Antes de tentar atualizar/emitir, consulta o ID conhecido no Bling.
+// Se a NF-e já estiver autorizada, apenas sincroniza a Matrix e encerra.
+app.use(require("./src/routes/bling-emit-guard"));
+
 app.use(require("./src/routes/bling"));
 app.use(require("./src/routes/whatsapp"));
 
