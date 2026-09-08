@@ -9,7 +9,7 @@ const BLING_DELAY_MS = 360;
 const RESYNC_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_NFE_PAGES = 8;
 const NFE_PAGE_SIZE = 100;
-const ML_ENRICH_CONCURRENCY = 6;
+const ML_ENRICH_CONCURRENCY = 4;
 
 let syncState = {
   running: false,
@@ -303,7 +303,10 @@ function chooseContext(info, payload, contexts, knownOrderIds, knownNfeMap, assi
   const minimum = hasDocument ? 120 : 78;
   if (best.score < minimum) return null;
 
-  if (second && best.score - second.score < 8) return null;
+  // Com CPF/CNPJ idêntico aceitamos o melhor pedido ainda não associado.
+  // Isso resolve compras duplicadas do mesmo cliente, mesmo valor e mesmo horário:
+  // a primeira NF ocupa o primeiro pedido; a próxima NF ocupa o segundo.
+  if (!hasDocument && second && best.score - second.score < 8) return null;
 
   return {
     orderId: best.orderId,
@@ -574,9 +577,16 @@ async function runDeepSync(orders) {
         .map(d => [String(d.bling_nfe_id), String(d.marketplace_order_id)])
     );
 
+    // Só consideramos o pedido definitivamente resolvido quando já temos a
+    // chave de 44 dígitos. Assim a V3 também completa notas antigas que a V2
+    // marcou como autorizadas, mas ainda sem DANFE/XML utilizáveis.
     const assigned = new Set(
       docs
-        .filter(d => String(d.status || "").toLowerCase() === "authorized")
+        .filter(
+          d =>
+            String(d.status || "").toLowerCase() === "authorized" &&
+            digitsOnly(d.nfe_access_key).length === 44
+        )
         .map(d => String(d.marketplace_order_id))
     );
 
@@ -650,7 +660,7 @@ async function runDeepSync(orders) {
           syncState.authorized += 1;
         }
 
-        if (syncState.authorized >= orders.length) break;
+        if (assigned.size >= orders.length) break;
       } catch (error) {
         console.warn(
           `[Fiscal V3] Falha lendo NF-e ${summaryInfo.id}:`,
