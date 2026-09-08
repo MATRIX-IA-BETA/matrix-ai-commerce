@@ -4,16 +4,20 @@ const path = require("path");
 const { env } = require("./src/config/env");
 const { supabase } = require("./src/db/supabase");
 const { createAnalyticsRouter } = require("./src/routes/analytics");
+const { installBlingNfeParcelDateGuard } = require("./src/services/bling-nfe-parcel-date-guard");
 const { installBlingNfeRequiredFields } = require("./src/services/bling-nfe-required-fields");
 
 const app = express();
 
 app.use(express.json({ limit: "2mb" }));
 
-// Primeiro instala a camada que completa cabeçalho fiscal/pagamento usando
-// uma NF-e autorizada da própria conta como referência. Depois carregamos o
-// vínculo do produto fiscal; assim ele acrescenta NCM e a camada anterior
-// também consegue espelhar o NCM no campo classificacaoFiscal da API.
+// Instala primeiro a guarda de vencimento. A camada de campos obrigatórios
+// cria a parcela e, ao encaminhar o payload, a guarda garante que a data nunca
+// fique anterior à data fiscal corrente (evita rejeição SEFAZ 900).
+installBlingNfeParcelDateGuard();
+
+// Completa cabeçalho fiscal/pagamento usando uma NF-e autorizada da própria
+// conta como referência. Depois carregamos o vínculo do produto fiscal.
 installBlingNfeRequiredFields();
 const { installBlingFiscalProductLink } = require("./src/services/bling-fiscal-product-link");
 installBlingFiscalProductLink();
