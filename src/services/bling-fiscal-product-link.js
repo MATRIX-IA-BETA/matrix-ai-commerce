@@ -4,20 +4,42 @@ const originalBlingFetch = blingService.blingFetch;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const productCache = new Map();
 
-// Descrições fiscais geradas pela Matrix e aliases aceitos no cadastro do Bling.
-// "GABINETE OFFICER" ficou mantido por compatibilidade com o fluxo atual,
-// mas também aceitamos "GABINETE OFFICE", que é uma grafia comum no cadastro.
-const FISCAL_PRODUCT_ALIASES = new Map([
-  ["gabinete gamer", ["gabinete gamer"]],
-  ["gabinete officer", ["gabinete officer", "gabinete office"]]
-]);
+const TARGET_FISCAL_PRODUCT = "GABINETE DE COMPUTADOR";
+const TARGET_FISCAL_PRODUCT_NORMALIZED = "gabinete de computador";
+const TARGET_NCM = "84733019";
 
-const LINKED_FISCAL_PRODUCTS = new Set(FISCAL_PRODUCT_ALIASES.keys());
+// Qualquer anúncio com uma dessas expressões deve sair fiscalmente como
+// GABINETE DE COMPUTADOR. A lista inclui os termos definidos pela Shop Matrix
+// e variações usuais de anúncios de computadores/gabinetes.
+const COMPUTER_KEYWORDS = [
+  "pc",
+  "gamer",
+  "office",
+  "officer",
+  "computador",
+  "cpu",
+  "pc gamer",
+  "cpu gamer",
+  "pc home office",
+  "home office",
+  "desktop",
+  "gabinete",
+  "microcomputador",
+  "micro computador",
+  "workstation",
+  "estacao de trabalho",
+  "torre",
+  "pc completo",
+  "computador completo",
+  "desktop gamer",
+  "computador gamer"
+];
 
 function normalizeName(value) {
   return String(value || "")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -51,18 +73,18 @@ function isActiveProduct(row) {
   return status === "A" || status === "ATIVO" || status === "ACTIVE";
 }
 
-function candidateScore(row, wanted, aliases) {
-  const name = normalizeName(row?.nome);
-  let score = 0;
+function containsWholeTerm(text, term) {
+  if (!text || !term) return false;
+  return (` ${text} `).includes(` ${term} `);
+}
 
-  if (name === wanted) score += 1000;
-  else if (aliases.includes(name)) score += 800;
-  else if (aliases.some(alias => name.includes(alias) || alias.includes(name))) score += 500;
+function looksLikeComputerDescription(description) {
+  const normalized = normalizeName(description);
+  if (!normalized) return false;
 
-  if (isActiveProduct(row)) score += 100;
-  if (row?.codigo) score += 10;
-
-  return score;
+  return COMPUTER_KEYWORDS.some(keyword =>
+    containsWholeTerm(normalized, normalizeName(keyword))
+  );
 }
 
 async function searchProductsByName(name) {
@@ -111,58 +133,36 @@ async function fetchProductDetail(productId, description) {
   return detailPayload?.data || detailPayload || {};
 }
 
-async function findRegisteredBlingProduct(description) {
-  const normalized = normalizeName(description);
-  const cached = productCache.get(normalized);
+async function findRegisteredBlingProduct() {
+  const cached = productCache.get(TARGET_FISCAL_PRODUCT_NORMALIZED);
 
   if (cached && Date.now() - cached.savedAt < CACHE_TTL_MS) {
     return cached.product;
   }
 
-  const aliases = (FISCAL_PRODUCT_ALIASES.get(normalized) || [normalized])
-    .map(normalizeName)
-    .filter(Boolean);
-
-  // Pesquisa tanto pela descrição original quanto pelos aliases.
-  // Deduplicamos pelo ID porque o mesmo cadastro pode aparecer em mais de uma busca.
-  const candidatesById = new Map();
-
-  for (const alias of aliases) {
-    const rows = await searchProductsByName(alias);
-    for (const row of rows) {
-      if (row?.id == null) continue;
-      candidatesById.set(String(row.id), row);
-    }
-  }
-
-  const candidates = [...candidatesById.values()]
-    .map(row => ({
-      row,
-      score: candidateScore(row, normalized, aliases)
-    }))
-    .filter(item => item.score > 0)
+  const rows = await searchProductsByName(TARGET_FISCAL_PRODUCT);
+  const exact = rows
+    .filter(row => normalizeName(row?.nome) === TARGET_FISCAL_PRODUCT_NORMALIZED)
     .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return Number(a.row?.id || 0) - Number(b.row?.id || 0);
+      const activeDiff = Number(isActiveProduct(b)) - Number(isActiveProduct(a));
+      if (activeDiff !== 0) return activeDiff;
+      return Number(a?.id || 0) - Number(b?.id || 0);
     });
 
-  if (!candidates.length) {
+  if (!exact.length) {
     throw makeFiscalError(
-      `Produto fiscal "${description}" não foi localizado no cadastro do Bling. A NF-e não será criada até esse vínculo estar correto.`,
-      { aliases_procurados: aliases }
+      `Produto fiscal "${TARGET_FISCAL_PRODUCT}" não foi localizado no cadastro do Bling. A NF-e não será criada até esse vínculo estar correto.`,
+      { encontrados: rows.map(row => ({ id: row?.id, nome: row?.nome, codigo: row?.codigo })) }
     );
   }
 
-  // Não bloqueamos mais só porque existem duplicados com o mesmo nome.
-  // Tentamos, na ordem de melhor correspondência, o primeiro cadastro com NCM válido.
   const invalidCandidates = [];
 
-  for (const candidate of candidates) {
-    const selected = candidate.row;
-    const detail = await fetchProductDetail(selected.id, description);
+  for (const selected of exact) {
+    const detail = await fetchProductDetail(selected.id, TARGET_FISCAL_PRODUCT);
     const ncm = digitsOnly(detail?.tributacao?.ncm);
 
-    if (ncm.length !== 8) {
+    if (ncm !== TARGET_NCM) {
       invalidCandidates.push({
         id: detail?.id || selected.id,
         nome: detail?.nome || selected?.nome,
@@ -174,19 +174,19 @@ async function findRegisteredBlingProduct(description) {
 
     const product = {
       id: String(detail?.id || selected.id),
-      nome: detail?.nome || selected?.nome || description,
+      nome: TARGET_FISCAL_PRODUCT,
       codigo: detail?.codigo || selected?.codigo || null,
       unidade: detail?.unidade || selected?.unidade || null,
-      ncm
+      ncm: TARGET_NCM
     };
 
-    if (candidates.length > 1) {
+    if (exact.length > 1) {
       console.warn(
-        `[Bling fiscal product] ${description}: ${candidates.length} candidatos encontrados; usando ID ${product.id} (${product.nome}).`
+        `[Bling fiscal product] ${TARGET_FISCAL_PRODUCT}: ${exact.length} cadastros exatos encontrados; usando ID ${product.id}.`
       );
     }
 
-    productCache.set(normalized, {
+    productCache.set(TARGET_FISCAL_PRODUCT_NORMALIZED, {
       savedAt: Date.now(),
       product
     });
@@ -195,7 +195,7 @@ async function findRegisteredBlingProduct(description) {
   }
 
   throw makeFiscalError(
-    `Os cadastros encontrados para "${description}" no Bling não possuem NCM válido de 8 dígitos.`,
+    `O produto "${TARGET_FISCAL_PRODUCT}" foi encontrado no Bling, mas nenhum cadastro possui o NCM ${TARGET_NCM}.`,
     { encontrados: invalidCandidates }
   );
 }
@@ -223,34 +223,31 @@ async function enrichNfeOptions(path, options = {}) {
     return options;
   }
 
+  let product = null;
   let changed = false;
-  const resolved = new Map();
   const itens = [];
 
   for (const item of payload.itens) {
     const description = String(item?.descricao || "").trim();
-    const normalized = normalizeName(description);
 
-    if (!LINKED_FISCAL_PRODUCTS.has(normalized)) {
+    if (!looksLikeComputerDescription(description)) {
       itens.push(item);
       continue;
     }
 
-    let product = resolved.get(normalized);
     if (!product) {
-      product = await findRegisteredBlingProduct(description);
-      resolved.set(normalized, product);
+      product = await findRegisteredBlingProduct();
     }
 
-    // Replica pela API o que a Larissa faz na tela do Bling: parte da
-    // descrição, encontra o produto já cadastrado e usa código, descrição,
-    // unidade e NCM desse cadastro.
+    // Todos os anúncios identificados como computador passam a usar o mesmo
+    // produto fiscal cadastrado no Bling. O código interno vem do próprio
+    // cadastro; se ele estiver vazio, não reaproveitamos o código MLB do anúncio.
     itens.push({
       ...item,
-      codigo: product.codigo || item.codigo,
-      descricao: product.nome,
+      codigo: product.codigo || undefined,
+      descricao: TARGET_FISCAL_PRODUCT,
       unidade: product.unidade || item.unidade || "UN",
-      ncm: product.ncm
+      ncm: TARGET_NCM
     });
     changed = true;
   }
@@ -284,5 +281,6 @@ function installBlingFiscalProductLink() {
 
 module.exports = {
   installBlingFiscalProductLink,
-  findRegisteredBlingProduct
+  findRegisteredBlingProduct,
+  looksLikeComputerDescription
 };
