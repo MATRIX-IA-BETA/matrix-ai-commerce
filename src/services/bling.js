@@ -163,7 +163,6 @@ function normalizeUf(value) {
 
   const raw = String(value).trim().toUpperCase();
 
-  // Mercado Livre pode trazer algo como BR-RJ.
   if (/^BR-[A-Z]{2}$/.test(raw)) {
     return raw.slice(3);
   }
@@ -172,7 +171,6 @@ function normalizeUf(value) {
     return raw;
   }
 
-  // Não inventamos UF a partir de nome por segurança.
   return undefined;
 }
 
@@ -188,42 +186,70 @@ function buildGeneralAddress(customer) {
     uf: normalizeUf(customer.state)
   };
 
-  // Remove propriedades undefined para não mandar lixo à API.
   return Object.fromEntries(
     Object.entries(general).filter(([, value]) => value !== undefined && value !== "")
   );
 }
 
 async function createOrUpdateBlingContact(customer) {
-  if (customer.bling_contact_id) {
-    return String(customer.bling_contact_id);
-  }
-
   const generalAddress = buildGeneralAddress(customer);
+
+  if (!customer.document_number) {
+    const e = new Error(
+      "Cliente sem CPF/CNPJ. O contato não será enviado ao Bling e a NF-e não será criada."
+    );
+    e.httpStatus = 422;
+    throw e;
+  }
 
   const payload = {
     nome: customer.name || "Cliente Mercado Livre",
-
-    // Bling exige um valor válido para situação do contato.
     situacao: "A",
-
-    // F = pessoa física / J = pessoa jurídica.
     tipo: customer.document_type === "CNPJ" ? "J" : "F",
-
-    numeroDocumento: customer.document_number || undefined,
+    numeroDocumento: String(customer.document_number).replace(/\D/g, ""),
     email: customer.email || undefined,
     celular: customer.phone || undefined,
-
-    // Na API v3 o endereço deve ficar dentro de endereco.geral.
     endereco:
       Object.keys(generalAddress).length > 0
         ? { geral: generalAddress }
         : undefined
   };
 
-  const cleanPayload = JSON.parse(
-    JSON.stringify(payload)
-  );
+  const cleanPayload = JSON.parse(JSON.stringify(payload));
+
+  if (customer.bling_contact_id) {
+    const existingId = String(customer.bling_contact_id);
+
+    const updateResponse = await blingFetch(
+      `/contatos/${encodeURIComponent(existingId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(cleanPayload)
+      }
+    );
+
+    const updateText = await updateResponse.text();
+    let updateData = {};
+
+    try {
+      updateData = updateText ? JSON.parse(updateText) : {};
+    } catch {
+      updateData = { raw: updateText };
+    }
+
+    if (updateResponse.ok) {
+      return existingId;
+    }
+
+    if (updateResponse.status !== 404) {
+      const e = new Error(
+        `Erro atualizando contato no Bling: ${JSON.stringify(updateData)}`
+      );
+      e.httpStatus = updateResponse.status;
+      e.detail = updateData;
+      throw e;
+    }
+  }
 
   const response = await blingFetch("/contatos", {
     method: "POST",
@@ -231,8 +257,8 @@ async function createOrUpdateBlingContact(customer) {
   });
 
   const text = await response.text();
-
   let data = {};
+
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -240,9 +266,12 @@ async function createOrUpdateBlingContact(customer) {
   }
 
   if (!response.ok) {
-    throw new Error(
+    const e = new Error(
       `Erro criando contato no Bling: ${JSON.stringify(data)}`
     );
+    e.httpStatus = response.status;
+    e.detail = data;
+    throw e;
   }
 
   const blingId = data?.data?.id || data?.id;
