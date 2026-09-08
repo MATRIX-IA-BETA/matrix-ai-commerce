@@ -239,13 +239,14 @@ async function enrichNfeOptions(path, options = {}) {
       product = await findRegisteredBlingProduct();
     }
 
-    // Todos os anúncios identificados como computador passam a usar o mesmo
-    // produto fiscal cadastrado no Bling. O código interno vem do próprio
-    // cadastro; se ele estiver vazio, não reaproveitamos o código MLB do anúncio.
+    // O item fica vinculado ao produto fiscal cadastrado no Bling pelo ID.
+    // Se esse cadastro não tiver código interno, preservamos o código que já
+    // veio do anúncio (SKU/MLB); a API do Bling exige que o campo não fique vazio.
     itens.push({
       ...item,
-      codigo: product.codigo || undefined,
+      codigo: product.codigo || item.codigo || String(product.id),
       descricao: TARGET_FISCAL_PRODUCT,
+      produto: { id: Number(product.id) },
       unidade: product.unidade || item.unidade || "UN",
       ncm: TARGET_NCM
     });

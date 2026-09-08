@@ -7,6 +7,7 @@ const { supabase } = require("./src/db/supabase");
 const { createAnalyticsRouter } = require("./src/routes/analytics");
 const { installBlingNfeParcelDateGuard } = require("./src/services/bling-nfe-parcel-date-guard");
 const { installBlingNfeRequiredFields } = require("./src/services/bling-nfe-required-fields");
+const { installBlingNfePutPreserve } = require("./src/services/bling-nfe-put-preserve");
 
 // Todas as chamadas para a API do Bling passam por uma fila única, com
 // espaçamento mínimo entre requisições e retry automático quando houver 429.
@@ -28,6 +29,10 @@ installBlingNfeParcelDateGuard();
 installBlingNfeRequiredFields();
 const { installBlingFiscalProductLink } = require("./src/services/bling-fiscal-product-link");
 installBlingFiscalProductLink();
+
+// PUT /nfe/{id} substitui o recurso e exige os identificadores da nota.
+// Antes da atualização, consulta a NF-e existente e preserva número/série.
+installBlingNfePutPreserve();
 
 // =========================================================
 // INTERFACES WEB
