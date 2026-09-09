@@ -5,9 +5,6 @@ const { processStockForMarketplaceOrder } = require("../services/stock");
 const {
   processarNotificacaoClaimML
 } = require("../services/sac");
-const {
-  agendarAutoRespostaMensagemML
-} = require("../services/ml-sac-auto-reply");
 
 router.post(
   "/webhooks/mercadolivre",
@@ -24,13 +21,9 @@ router.post(
       payload.resource
     );
 
-    // Mensagens pós-venda não dependem mais de sac_threads/sac_messages.
-    // Agenda a IA imediatamente, antes até da auditoria do webhook no banco,
-    // para uma eventual falha de persistência não impedir o atendimento.
-    if (payload.topic === "messages") {
-      const autoReply = agendarAutoRespostaMensagemML(payload);
-      console.log("[SAC ML IA] webhook:", autoReply);
-    }
+    // Mensagens pós-venda são carregadas ao vivo na Central SAC ML.
+    // A IA não envia mais respostas automaticamente: agora ela apenas gera
+    // uma sugestão quando o operador clicar em SUGESTÃO AI.
 
     try {
       const {
