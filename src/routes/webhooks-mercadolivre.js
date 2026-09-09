@@ -3,9 +3,11 @@ const { supabase } = require("../db/supabase");
 const { sincronizarPedidoPorId } = require("../services/mercadolivre");
 const { processStockForMarketplaceOrder } = require("../services/stock");
 const {
-  processarNotificacaoMensagemML,
   processarNotificacaoClaimML
 } = require("../services/sac");
+const {
+  agendarAutoRespostaMensagemML
+} = require("../services/ml-sac-auto-reply");
 
 router.post(
   "/webhooks/mercadolivre",
@@ -89,9 +91,12 @@ router.post(
         }
 
 
-        // Mensagens pós-venda
+        // Mensagens pós-venda: a Central SAC ML agora trabalha direto com a API
+        // do Mercado Livre. A mesma IA operacional usada no WhatsApp é agendada
+        // aqui, com debounce para juntar mensagens consecutivas do cliente.
         if (payload.topic === "messages") {
-          await processarNotificacaoMensagemML(payload);
+          const autoReply = agendarAutoRespostaMensagemML(payload);
+          console.log("[SAC ML IA] webhook:", autoReply);
         }
 
         // Reclamações e ações em reclamações
