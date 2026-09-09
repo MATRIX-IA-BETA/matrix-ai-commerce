@@ -2,8 +2,7 @@ const blingService = require("./bling");
 const { supabase } = require("../db/supabase");
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-let cachedReference = null;
-let cachedAt = 0;
+const referenceCache = new Map();
 
 function cleanObject(value) {
   if (Array.isArray(value)) {
@@ -48,6 +47,41 @@ function finiteNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function digitsOnly(value) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function inferContributor(contact) {
+  const explicit = finiteNumber(
+    contact?.contribuinte ??
+    contact?.indicadorIe ??
+    contact?.indicadorIE
+  );
+
+  if ([1, 2, 9].includes(explicit)) return explicit;
+
+  const document = digitsOnly(
+    contact?.numeroDocumento ??
+    contact?.cpfCnpj ??
+    contact?.cpf ??
+    contact?.cnpj
+  );
+
+  // Pessoa física em NF-e de venda é destinatário não contribuinte do ICMS.
+  if (document.length === 11) return 9;
+
+  // Para CNPJ só inferimos contribuinte quando existe IE. Sem informação
+  // suficiente, não chutamos a condição fiscal.
+  if (
+    document.length === 14 &&
+    String(contact?.ie || "").trim()
+  ) {
+    return 1;
+  }
+
+  return null;
+}
+
 function extractReference(payload, nfeId) {
   const d = payload?.data || payload || {};
   const naturezaId = finiteNumber(d?.naturezaOperacao?.id);
@@ -55,6 +89,9 @@ function extractReference(payload, nfeId) {
 
   const lojaId = finiteNumber(d?.loja?.id);
   const finalidade = finiteNumber(d?.finalidade);
+  const contribuinte = inferContributor(
+    d?.contato || d?.cliente || d?.destinatario || {}
+  );
 
   const parcelas = Array.isArray(d?.parcelas)
     ? d.parcelas
@@ -77,6 +114,7 @@ function extractReference(payload, nfeId) {
 
   return cleanObject({
     sourceNfeId: String(nfeId),
+    contribuinte: contribuinte || undefined,
     naturezaOperacao: { id: naturezaId },
     loja: lojaId && lojaId > 0
       ? {
@@ -93,12 +131,17 @@ function extractReference(payload, nfeId) {
   });
 }
 
-async function findReferenceDefaults(fetchFn) {
+async function findReferenceDefaults(fetchFn, targetContributor = null) {
+  const cacheKey = targetContributor == null
+    ? "any"
+    : `contribuinte:${targetContributor}`;
+
+  const cached = referenceCache.get(cacheKey);
   if (
-    cachedReference &&
-    Date.now() - cachedAt < CACHE_TTL_MS
+    cached &&
+    Date.now() - cached.savedAt < CACHE_TTL_MS
   ) {
-    return cachedReference;
+    return cached.reference;
   }
 
   const { data: docs, error } = await supabase
@@ -107,7 +150,7 @@ async function findReferenceDefaults(fetchFn) {
     .eq("status", "authorized")
     .not("bling_nfe_id", "is", null)
     .order("updated_at", { ascending: false })
-    .limit(20);
+    .limit(50);
 
   if (error) {
     const e = new Error(
@@ -132,16 +175,34 @@ async function findReferenceDefaults(fetchFn) {
       const reference = extractReference(payload, id);
       if (!reference) continue;
 
-      cachedReference = reference;
-      cachedAt = Date.now();
+      // Não reutiliza natureza fiscal de contribuinte em nota destinada a
+      // não contribuinte (nem o inverso). Essa mistura gera, entre outras,
+      // a rejeição SEFAZ 600 por CSOSN incompatível.
+      if (
+        targetContributor != null &&
+        reference.contribuinte !== targetContributor
+      ) {
+        continue;
+      }
+
+      referenceCache.set(cacheKey, {
+        savedAt: Date.now(),
+        reference
+      });
       return reference;
     } catch (_) {
       // Tenta a próxima NF-e autorizada já conhecida pela Matrix.
     }
   }
 
+  const condition = targetContributor === 9
+    ? " para destinatário não contribuinte"
+    : targetContributor === 1
+      ? " para destinatário contribuinte"
+      : "";
+
   const e = new Error(
-    "A Matrix não encontrou uma NF-e autorizada no Bling com Natureza de Operação para usar como referência. A nova NF-e não será criada até essa configuração fiscal estar disponível."
+    `A Matrix não encontrou uma NF-e autorizada no Bling${condition} com Natureza de Operação para usar como referência. A nova NF-e foi bloqueada para não aplicar uma regra fiscal incompatível.`
   );
   e.httpStatus = 422;
   throw e;
@@ -215,7 +276,8 @@ async function enrichNfeRequiredFields(path, options, fetchFn) {
     return options;
   }
 
-  const reference = await findReferenceDefaults(fetchFn);
+  const targetContributor = inferContributor(payload?.contato || {});
+  const reference = await findReferenceDefaults(fetchFn, targetContributor);
   const defaultParcel = buildDefaultParcel(payload, reference);
 
   const enriched = cleanObject({
