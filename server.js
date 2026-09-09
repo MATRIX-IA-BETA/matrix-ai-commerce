@@ -49,9 +49,21 @@ function sendMatrixPage(fileName) {
     fs.readFile(filePath, "utf8", (error, source) => {
       if (error) return next(error);
 
-      const html = source.includes("matrix-global-nav.css")
-        ? source
-        : source.replace("</head>", `${MATRIX_NAV_ASSETS}</head>`);
+      let html = source;
+
+      if (!html.includes("matrix-global-nav.css")) {
+        html = html.replace("</head>", `${MATRIX_NAV_ASSETS}</head>`);
+      }
+
+      if (
+        fileName === "fiscal-nfe.html" &&
+        !html.includes("fiscal-marketplace-links.js")
+      ) {
+        html = html.replace(
+          "</head>",
+          `\n<script defer src="/fiscal-marketplace-links.js?v=1"></script>\n</head>`
+        );
+      }
 
       res.set({
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
@@ -103,6 +115,7 @@ app.use(require("./src/routes/basic"));
 app.use(require("./src/routes/webhooks-mercadolivre"));
 app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/sac"));
+app.use(require("./src/routes/ml-sac-history-links"));
 app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
