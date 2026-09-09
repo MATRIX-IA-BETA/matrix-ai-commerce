@@ -198,6 +198,38 @@ async function findLocalOrderForPack(packId) {
   return data?.[0] || null;
 }
 
+function resolveMessageRecipient(payload, sellerId, order) {
+  const rawMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+  for (let index = rawMessages.length - 1; index >= 0; index -= 1) {
+    const fromId = cleanId(rawMessages[index]?.from?.user_id);
+    if (fromId && fromId !== sellerId) return fromId;
+  }
+
+  const path = String(payload?.conversation_status?.path || "");
+  if (path.includes("/conversations/")) return ML_MESSAGING_AGENT_ID_MLB;
+
+  return cleanId(order?.buyer_id || order?.raw_data?.buyer?.id) || ML_MESSAGING_AGENT_ID_MLB;
+}
+
+async function postMessageToMl({ packId, sellerId, recipientId, text, account, numericRecipient = false }) {
+  const recipient = numericRecipient ? Number(recipientId) : String(recipientId);
+  const { response } = await mercadoLivreFetch(
+    `/messages/packs/${encodeURIComponent(packId)}/sellers/${encodeURIComponent(sellerId)}?tag=post_sale`,
+    account,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: { user_id: String(sellerId) },
+        to: { user_id: recipient },
+        text
+      })
+    }
+  );
+  const data = await response.json().catch(() => ({}));
+  return { response, data };
+}
+
 router.get("/api/sac/ml/live", async (req, res) => {
   try {
     const offset = Math.max(0, Math.trunc(Number(req.query.offset || 0)));
@@ -304,25 +336,56 @@ router.post("/api/sac/ml/live/:packId/send", async (req, res) => {
     if (!account) return res.status(404).json({ sucesso: false, mensagem: "Conta Mercado Livre não conectada." });
 
     const sellerId = cleanId(account.user_id);
-    const { response } = await mercadoLivreFetch(
-      `/messages/packs/${encodeURIComponent(packId)}/sellers/${encodeURIComponent(sellerId)}?tag=post_sale`,
-      account,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: { user_id: sellerId },
-          to: { user_id: ML_MESSAGING_AGENT_ID_MLB },
-          text
-        })
-      }
-    );
+    const order = await findLocalOrderForPack(packId);
+    const payload = await fetchPackConversation(packId, account);
+    let recipientId = resolveMessageRecipient(payload, sellerId, order);
 
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return res.status(response.status).json({
+    let attempt = await postMessageToMl({
+      packId,
+      sellerId,
+      recipientId,
+      text,
+      account
+    });
+
+    const firstError = String(attempt.data?.message || attempt.data?.error || "");
+
+    // A migração de mensageria do MLB é progressiva. Conversas antigas podem
+    // trazer o comprador real como remetente e as novas trazem o Agente. Se o
+    // destinatário da própria conversa não for aceito, tenta o Agente oficial.
+    if (!attempt.response.ok && attempt.response.status === 400 && recipientId !== ML_MESSAGING_AGENT_ID_MLB) {
+      recipientId = ML_MESSAGING_AGENT_ID_MLB;
+      attempt = await postMessageToMl({
+        packId,
+        sellerId,
+        recipientId,
+        text,
+        account
+      });
+    }
+
+    // Alguns validadores do endpoint diferenciam tipo numérico/string. Só
+    // repete em erro de validação do destinatário, nunca depois de sucesso.
+    const secondError = String(attempt.data?.message || attempt.data?.error || "");
+    if (
+      !attempt.response.ok &&
+      attempt.response.status === 400 &&
+      /to\.user_id|to user|recipient|receiver/i.test(`${firstError} ${secondError}`)
+    ) {
+      attempt = await postMessageToMl({
+        packId,
+        sellerId,
+        recipientId,
+        text,
+        account,
+        numericRecipient: true
+      });
+    }
+
+    if (!attempt.response.ok) {
+      return res.status(attempt.response.status).json({
         sucesso: false,
-        mensagem: `Mercado Livre recusou a mensagem: ${JSON.stringify(data)}`
+        mensagem: `Mercado Livre recusou a mensagem: ${JSON.stringify(attempt.data)}`
       });
     }
 
@@ -331,11 +394,15 @@ router.post("/api/sac/ml/live/:packId/send", async (req, res) => {
 
     let conversation = null;
     try {
-      const order = await findLocalOrderForPack(packId);
       conversation = await liveConversation(packId, order, account, true);
     } catch (_) {}
 
-    res.json({ sucesso: true, resultado: data, conversa: conversation });
+    res.json({
+      sucesso: true,
+      resultado: attempt.data,
+      conversa: conversation,
+      destinatario_ml: String(recipientId)
+    });
   } catch (error) {
     console.error("[SAC ML LIVE] send:", error);
     res.status(500).json({ sucesso: false, mensagem: error.message });
