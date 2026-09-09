@@ -5,11 +5,6 @@ const {
   getMercadoLivreAccount,
   mercadoLivreFetch
 } = require("../services/mercadolivre");
-const {
-  sincronizarClaimML,
-  contextoSac,
-  enviarRespostaSac
-} = require("../services/sac");
 
 const LIST_CACHE_MS = 45 * 1000;
 const PAGE_SIZE = 50;
@@ -83,6 +78,21 @@ function productInfo(order) {
       items[0]?.item?.seller_custom_field ||
       null
   };
+}
+
+function extractMessages(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.messages)) return payload.messages;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.results)) return payload.results;
+  return [];
+}
+
+function availableActionsFromClaim(claim) {
+  const respondent = (claim?.players || []).find(player => player?.role === "respondent");
+  return (respondent?.available_actions || [])
+    .map(action => typeof action === "string" ? action : action?.action)
+    .filter(Boolean);
 }
 
 async function fetchClaimsByStatus(account, status) {
@@ -187,6 +197,41 @@ async function loadOrders(orderIds) {
   return map;
 }
 
+async function loadOrder(account, orderId) {
+  if (!orderId) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from("marketplace_orders")
+      .select("marketplace_order_id,buyer_id,buyer_nickname,total_amount,paid_amount,raw_data")
+      .eq("marketplace", "mercadolivre")
+      .eq("marketplace_order_id", String(orderId))
+      .maybeSingle();
+
+    if (!error && data) return data;
+  } catch (_) {}
+
+  try {
+    const { response } = await mercadoLivreFetch(
+      `/orders/${encodeURIComponent(String(orderId))}`,
+      account
+    );
+    const raw = await readJson(response);
+    if (!response.ok) return null;
+
+    return {
+      marketplace_order_id: String(orderId),
+      buyer_id: raw?.buyer?.id == null ? null : String(raw.buyer.id),
+      buyer_nickname: raw?.buyer?.nickname || null,
+      total_amount: raw?.total_amount ?? null,
+      paid_amount: raw?.paid_amount ?? null,
+      raw_data: raw
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function loadThreads(claimIds) {
   const map = new Map();
   const ids = [...new Set(claimIds.filter(Boolean).map(String))];
@@ -205,6 +250,38 @@ async function loadThreads(claimIds) {
   }
 
   return map;
+}
+
+async function fetchClaimBundle(account, claimId) {
+  const paths = [
+    `/post-purchase/v1/claims/${encodeURIComponent(claimId)}`,
+    `/post-purchase/v1/claims/${encodeURIComponent(claimId)}/detail`,
+    `/post-purchase/v1/claims/${encodeURIComponent(claimId)}/affects-reputation`,
+    `/post-purchase/v1/claims/${encodeURIComponent(claimId)}/messages`
+  ];
+
+  const requests = await Promise.all(paths.map(path => mercadoLivreFetch(path, account)));
+  const parsed = [];
+  for (const item of requests) {
+    parsed.push({ response: item.response, data: await readJson(item.response) });
+  }
+
+  const [claimResult, detailResult, reputationResult, messagesResult] = parsed;
+
+  if (!claimResult.response.ok) {
+    const error = new Error(
+      `Erro abrindo reclamação no Mercado Livre: ${JSON.stringify(claimResult.data)}`
+    );
+    error.httpStatus = claimResult.response.status;
+    throw error;
+  }
+
+  return {
+    claim: claimResult.data || {},
+    detail: detailResult.response.ok ? detailResult.data || {} : {},
+    reputation: reputationResult.response.ok ? reputationResult.data || {} : {},
+    messages: messagesResult.response.ok ? extractMessages(messagesResult.data) : []
+  };
 }
 
 function summarizeClaim(claim, order, thread) {
@@ -241,7 +318,7 @@ function summarizeClaim(claim, order, thread) {
     due_date: thread?.due_date || null,
     date_created: claim.date_created || null,
     last_updated: claim.last_updated || claim.date_created || null,
-    available_actions: thread?.available_actions || [],
+    available_actions: thread?.available_actions || availableActionsFromClaim(claim),
     order_url: orderId ? `https://www.mercadolivre.com.br/vendas/${encodeURIComponent(orderId)}/detalhe` : null
   };
 }
@@ -286,6 +363,8 @@ async function buildList(force = false) {
   try {
     threads = await loadThreads(claimIds);
   } catch (error) {
+    // A lista não pode depender das permissões da tabela sac_threads.
+    // Se o banco negar leitura, os dados básicos ainda vêm direto do ML.
     console.warn("[Reclamações ML] Falha enriquecendo threads locais:", error.message);
   }
 
@@ -313,17 +392,54 @@ async function buildList(force = false) {
   return payload;
 }
 
-function normalizeDetail(thread, messages, order) {
-  const claim = thread?.raw_data?.claim || {};
-  const detail = thread?.raw_data?.detail || {};
-  const reputation = thread?.raw_data?.reputation || {};
+function normalizeLiveDetail(bundle, order) {
+  const claim = bundle?.claim || {};
+  const detail = bundle?.detail || {};
+  const reputation = bundle?.reputation || {};
   const product = productInfo(order);
   const category = claimCategory(claim);
-  const orderId = thread?.order_id || (claim.resource === "order" ? claim.resource_id : null);
+  const orderId = claim.resource === "order"
+    ? claim.resource_id
+    : claim.order_id;
+  const availableActions = availableActionsFromClaim(claim);
+  const affectsReputation =
+    reputation?.affects_reputation === "affected" ||
+    reputation?.affects_reputation === true;
+
+  const messages = (bundle?.messages || []).map((message, index) => {
+    const senderRole =
+      message?.sender_role ||
+      message?.sender?.role ||
+      message?.from?.role ||
+      null;
+    const direction = senderRole === "respondent" ? "outbound" : "inbound";
+
+    return {
+      id:
+        message?.id ||
+        message?.message_id ||
+        `${claim.id || claim.claim_id || "claim"}:${index}`,
+      direction,
+      sender_role: senderRole,
+      text:
+        message?.message ||
+        message?.translated_message ||
+        message?.text?.plain ||
+        (typeof message?.text === "string" ? message.text : "") ||
+        "",
+      date_created:
+        message?.message_date ||
+        message?.date_created ||
+        message?.date ||
+        message?.created_at ||
+        null,
+      raw_data: message
+    };
+  });
 
   return {
-    thread_id: thread.id,
-    claim_id: String(thread.claim_id || claim.id || ""),
+    thread_id: null,
+    claim_id: String(claim.id ?? claim.claim_id ?? ""),
     order_id: orderId == null ? null : String(orderId),
     order_url: orderId ? `https://www.mercadolivre.com.br/vendas/${encodeURIComponent(String(orderId))}/detalhe` : null,
     buyer_name: buyerName(order),
@@ -332,30 +448,69 @@ function normalizeDetail(thread, messages, order) {
     product_quantity: product.quantity,
     product_item_id: product.itemId,
     seller_sku: product.sellerSku,
-    status: claim.status || thread.status || null,
+    status: claim.status || null,
     stage: claim.stage || null,
     type: claim.type || null,
     category,
     reason_id: claim.reason_id || null,
-    subject: detail.title || thread.subject || detail.problem || `Reclamação ${thread.claim_id}`,
+    subject:
+      detail.title ||
+      detail.problem ||
+      detail.description ||
+      (claim.reason_id ? `Reclamação ${claim.reason_id}` : `Reclamação ${claim.id ?? claim.claim_id ?? ""}`),
     problem: detail.problem || detail.description || null,
     description: detail.description || null,
     action_responsible: detail.action_responsible || null,
-    due_date: detail.due_date || thread.due_date || reputation.due_date || null,
-    affects_reputation: Boolean(thread.affects_reputation),
-    available_actions: thread.available_actions || [],
+    due_date: detail.due_date || reputation.due_date || null,
+    affects_reputation: affectsReputation,
+    available_actions: availableActions,
     date_created: claim.date_created || null,
-    last_updated: claim.last_updated || thread.last_message_at || claim.date_created || null,
+    last_updated: claim.last_updated || claim.date_created || null,
     resolution: claim.resolution || null,
-    messages: (messages || []).map(message => ({
-      id: message.id,
-      direction: message.direction,
-      sender_role: message.sender_role,
-      text: message.text || "",
-      date_created: message.date_created,
-      raw_data: message.raw_data || null
-    }))
+    messages
   };
+}
+
+async function sendClaimMessageLive(account, claimId, claim, text) {
+  const actions = availableActionsFromClaim(claim);
+  const receiverRole = actions.includes("send_message_to_mediator")
+    ? "mediator"
+    : actions.includes("send_message_to_complainant")
+      ? "complainant"
+      : null;
+
+  if (!receiverRole) {
+    const error = new Error(
+      "O Mercado Livre não liberou envio de mensagem para esta reclamação neste momento."
+    );
+    error.httpStatus = 409;
+    throw error;
+  }
+
+  const { response } = await mercadoLivreFetch(
+    `/post-purchase/v1/claims/${encodeURIComponent(claimId)}/actions/send-message`,
+    account,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        receiver_role: receiverRole,
+        message: String(text).slice(0, 5000),
+        attachments: []
+      })
+    }
+  );
+
+  const data = await readJson(response);
+  if (!response.ok) {
+    const error = new Error(
+      `Mercado Livre recusou a resposta da reclamação: ${JSON.stringify(data)}`
+    );
+    error.httpStatus = response.status;
+    throw error;
+  }
+
+  return data;
 }
 
 router.get("/api/reclamacoes/ml", async (req, res) => {
@@ -374,15 +529,32 @@ router.get("/api/reclamacoes/ml", async (req, res) => {
 router.get("/api/reclamacoes/ml/:claimId", async (req, res) => {
   try {
     const claimId = String(req.params.claimId || "").trim();
-    if (!claimId) return res.status(400).json({ sucesso: false, mensagem: "claim_id obrigatório." });
+    if (!claimId) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "claim_id obrigatório."
+      });
+    }
 
-    const thread = await sincronizarClaimML(claimId);
-    const context = await contextoSac(thread.id);
-    const detail = normalizeDetail(context.thread, context.messages, context.pedido);
+    const account = await getMercadoLivreAccount();
+    if (!account) throw new Error("Conta Mercado Livre não conectada.");
+
+    // O detalhe é lido ao vivo do Mercado Livre e NÃO tenta mais gravar
+    // sac_threads/sac_messages. Assim a tela continua funcionando mesmo quando
+    // o banco local não tem permissão de escrita nessas tabelas.
+    const bundle = await fetchClaimBundle(account, claimId);
+    const orderId = bundle.claim?.resource === "order"
+      ? bundle.claim.resource_id
+      : bundle.claim?.order_id;
+    const order = await loadOrder(account, orderId);
+    const detail = normalizeLiveDetail(bundle, order);
 
     res.json({ sucesso: true, reclamacao: detail });
   } catch (error) {
-    res.status(500).json({ sucesso: false, mensagem: error.message });
+    res.status(error.httpStatus || 500).json({
+      sucesso: false,
+      mensagem: error.message
+    });
   }
 });
 
@@ -390,23 +562,59 @@ router.post("/api/reclamacoes/ml/:claimId/send", async (req, res) => {
   try {
     const claimId = String(req.params.claimId || "").trim();
     const text = String(req.body?.text || "").trim();
-    if (!claimId) return res.status(400).json({ sucesso: false, mensagem: "claim_id obrigatório." });
-    if (!text) return res.status(400).json({ sucesso: false, mensagem: "Digite uma resposta antes de enviar." });
 
-    const thread = await sincronizarClaimML(claimId);
-    await enviarRespostaSac(thread.id, text);
-    const refreshedThread = await sincronizarClaimML(claimId);
-    const context = await contextoSac(refreshedThread.id);
-    const detail = normalizeDetail(context.thread, context.messages, context.pedido);
+    if (!claimId) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "claim_id obrigatório."
+      });
+    }
+
+    if (!text) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "Digite uma resposta antes de enviar."
+      });
+    }
+
+    const account = await getMercadoLivreAccount();
+    if (!account) throw new Error("Conta Mercado Livre não conectada.");
+
+    const claimResponse = await mercadoLivreFetch(
+      `/post-purchase/v1/claims/${encodeURIComponent(claimId)}`,
+      account
+    );
+    const claim = await readJson(claimResponse.response);
+
+    if (!claimResponse.response.ok) {
+      const error = new Error(
+        `Erro conferindo reclamação antes do envio: ${JSON.stringify(claim)}`
+      );
+      error.httpStatus = claimResponse.response.status;
+      throw error;
+    }
+
+    await sendClaimMessageLive(account, claimId, claim, text);
+
+    const bundle = await fetchClaimBundle(account, claimId);
+    const orderId = bundle.claim?.resource === "order"
+      ? bundle.claim.resource_id
+      : bundle.claim?.order_id;
+    const order = await loadOrder(account, orderId);
+    const detail = normalizeLiveDetail(bundle, order);
 
     listCache = { at: 0, payload: null };
+
     res.json({
       sucesso: true,
       mensagem: "Resposta enviada na reclamação do Mercado Livre.",
       reclamacao: detail
     });
   } catch (error) {
-    res.status(500).json({ sucesso: false, mensagem: error.message });
+    res.status(error.httpStatus || 500).json({
+      sucesso: false,
+      mensagem: error.message
+    });
   }
 });
 
