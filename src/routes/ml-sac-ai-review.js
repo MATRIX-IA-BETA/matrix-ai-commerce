@@ -2,7 +2,7 @@ const router = require("express").Router();
 const {
   suggestForPack,
   learnFromEdit
-} = require("../services/ml-sac-ai-review-v2");
+} = require("../services/ml-sac-ai-review-v3");
 
 router.post("/api/sac/ml/ai/:packId/suggest", async (req, res) => {
   try {
