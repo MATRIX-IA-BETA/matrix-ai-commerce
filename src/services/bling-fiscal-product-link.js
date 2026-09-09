@@ -1,16 +1,17 @@
 const blingService = require("./bling");
+const { supabase } = require("../db/supabase");
 
 const originalBlingFetch = blingService.blingFetch;
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const CUSTOMER_FISCAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const productCache = new Map();
+const customerFiscalCache = new Map();
 
 const TARGET_FISCAL_PRODUCT = "GABINETE DE COMPUTADOR";
 const TARGET_FISCAL_PRODUCT_NORMALIZED = "gabinete de computador";
 const TARGET_NCM = "84733019";
 
-// Qualquer anúncio com uma dessas expressões deve sair fiscalmente como
-// GABINETE DE COMPUTADOR. A lista inclui os termos definidos pela Shop Matrix
-// e variações usuais de anúncios de computadores/gabinetes.
+// Termos definidos pela Shop Matrix + variações comuns dos anúncios.
 const COMPUTER_KEYWORDS = [
   "pc",
   "gamer",
@@ -78,13 +79,156 @@ function containsWholeTerm(text, term) {
   return (` ${text} `).includes(` ${term} `);
 }
 
+function hasComputerHardwareSignature(normalized) {
+  // Há anúncios em que o título não contém literalmente PC/computador, mas
+  // descreve claramente uma máquina completa, como "Intel Core i5 480 GB".
+  // Nesses casos exigimos assinatura de processador + memória/armazenamento,
+  // reduzindo o risco de classificar um componente avulso como gabinete.
+  const processor =
+    /\bintel\s+core\b/.test(normalized) ||
+    /\bcore\s+i[3579]\b/.test(normalized) ||
+    /\bi[3579]\s*[- ]?\d{3,5}[a-z]{0,2}\b/.test(normalized) ||
+    /\bryzen\s*[3579]?\b/.test(normalized) ||
+    /\bathlon\b/.test(normalized) ||
+    /\bceleron\b/.test(normalized) ||
+    /\bpentium\b/.test(normalized) ||
+    /\bxeon\b/.test(normalized);
+
+  const memory =
+    /\b(?:4|6|8|12|16|24|32|48|64|128)\s*gb\b/.test(normalized) ||
+    /\bram\b/.test(normalized);
+
+  const storage =
+    /\b(?:ssd|hdd|nvme|hd)\b/.test(normalized) ||
+    /\b\d{2,4}\s*gb\b/.test(normalized) ||
+    /\b\d+(?:[.,]\d+)?\s*tb\b/.test(normalized);
+
+  const operatingSystem = /\bwindows\s*(?:10|11)?\b/.test(normalized);
+
+  return processor && (memory || storage || operatingSystem);
+}
+
 function looksLikeComputerDescription(description) {
   const normalized = normalizeName(description);
   if (!normalized) return false;
 
-  return COMPUTER_KEYWORDS.some(keyword =>
-    containsWholeTerm(normalized, normalizeName(keyword))
+  if (
+    COMPUTER_KEYWORDS.some(keyword =>
+      containsWholeTerm(normalized, normalizeName(keyword))
+    )
+  ) {
+    return true;
+  }
+
+  return hasComputerHardwareSignature(normalized);
+}
+
+function getNestedBillingInfo(customer) {
+  const raw = customer?.raw_data || {};
+  const billingRoot = raw?.billing_info || raw?.billingInfo || null;
+
+  return (
+    billingRoot?.buyer?.billing_info ||
+    billingRoot?.buyer?.billingInfo ||
+    billingRoot?.billing_info ||
+    billingRoot?.billingInfo ||
+    null
   );
+}
+
+function additionalInfoValue(billing, type) {
+  const rows = Array.isArray(billing?.additional_info)
+    ? billing.additional_info
+    : Array.isArray(billing?.additionalInfo)
+      ? billing.additionalInfo
+      : [];
+
+  const found = rows.find(
+    row => String(row?.type || "").toUpperCase() === String(type).toUpperCase()
+  );
+
+  return found?.value == null ? null : String(found.value).trim();
+}
+
+function extractCustomerFiscalData(customer) {
+  const billing = getNestedBillingInfo(customer) || {};
+  const taxes = billing?.taxes || {};
+
+  const stateRegistration = String(
+    taxes?.inscriptions?.state_registration ||
+    taxes?.inscriptions?.stateRegistration ||
+    additionalInfoValue(billing, "STATE_REGISTRATION") ||
+    ""
+  ).trim();
+
+  const taxpayerDescription = String(
+    taxes?.taxpayer_type?.description ||
+    taxes?.taxpayerType?.description ||
+    additionalInfoValue(billing, "TAXPAYER_TYPE_ID") ||
+    ""
+  ).trim();
+
+  return {
+    stateRegistration: stateRegistration || null,
+    taxpayerDescription: taxpayerDescription || null
+  };
+}
+
+async function findCustomerFiscalByDocument(documentNumber) {
+  const document = digitsOnly(documentNumber);
+  if (!document) return null;
+
+  const cached = customerFiscalCache.get(document);
+  if (cached && Date.now() - cached.savedAt < CUSTOMER_FISCAL_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  const { data, error } = await supabase
+    .from("customers")
+    .select("document_type,document_number,raw_data")
+    .eq("document_number", document)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.warn(
+      `[Bling fiscal customer] Não foi possível consultar dados fiscais do CNPJ ${document}:`,
+      error.message
+    );
+    return null;
+  }
+
+  const value = data
+    ? {
+        documentType: String(data.document_type || "").toUpperCase(),
+        ...extractCustomerFiscalData(data)
+      }
+    : null;
+
+  customerFiscalCache.set(document, {
+    savedAt: Date.now(),
+    value
+  });
+
+  return value;
+}
+
+function taxpayerIndicator(fiscal) {
+  if (!fiscal) return null;
+  if (fiscal.stateRegistration) return 1;
+
+  const normalized = normalizeName(fiscal.taxpayerDescription);
+  if (!normalized) return null;
+
+  if (
+    normalized.includes("nao contribuinte") ||
+    normalized.includes("consumidor final")
+  ) {
+    return 9;
+  }
+
+  if (normalized.includes("contribuinte")) return 1;
+  return null;
 }
 
 async function searchProductsByName(name) {
@@ -219,38 +363,60 @@ async function enrichNfeOptions(path, options = {}) {
     return options;
   }
 
-  if (!Array.isArray(payload?.itens) || !payload.itens.length) {
-    return options;
+  let changed = false;
+  let contact = payload?.contato;
+
+  // Mercado Livre entrega a IE da pessoa jurídica em
+  // buyer.billing_info.taxes.inscriptions.state_registration. A Matrix já
+  // guarda o Billing Info integral no cliente; aqui recolocamos a IE no
+  // snapshot da NF-e mesmo se o cadastro do contato no Bling estiver vazio.
+  const contactDocument = digitsOnly(contact?.numeroDocumento);
+  if (contact && contactDocument.length === 14) {
+    const fiscal = await findCustomerFiscalByDocument(contactDocument);
+    const indicator = taxpayerIndicator(fiscal);
+
+    if (fiscal?.stateRegistration || indicator) {
+      contact = {
+        ...contact,
+        ie: contact?.ie || fiscal?.stateRegistration || undefined,
+        contribuinte:
+          Number(contact?.contribuinte) > 0
+            ? Number(contact.contribuinte)
+            : indicator || undefined
+      };
+      changed = true;
+    }
   }
 
   let product = null;
-  let changed = false;
-  const itens = [];
+  let itens = payload?.itens;
 
-  for (const item of payload.itens) {
-    const description = String(item?.descricao || "").trim();
+  if (Array.isArray(payload?.itens) && payload.itens.length) {
+    itens = [];
 
-    if (!looksLikeComputerDescription(description)) {
-      itens.push(item);
-      continue;
+    for (const item of payload.itens) {
+      const description = String(item?.descricao || "").trim();
+
+      if (!looksLikeComputerDescription(description)) {
+        itens.push(item);
+        continue;
+      }
+
+      if (!product) {
+        product = await findRegisteredBlingProduct();
+      }
+
+      itens.push({
+        ...item,
+        codigo: product.codigo || item.codigo || String(product.id),
+        descricao: TARGET_FISCAL_PRODUCT,
+        produto: { id: Number(product.id) },
+        unidade: product.unidade || item.unidade || "UN",
+        ncm: TARGET_NCM,
+        classificacaoFiscal: TARGET_NCM
+      });
+      changed = true;
     }
-
-    if (!product) {
-      product = await findRegisteredBlingProduct();
-    }
-
-    // O item fica vinculado ao produto fiscal cadastrado no Bling pelo ID.
-    // Se esse cadastro não tiver código interno, preservamos o código que já
-    // veio do anúncio (SKU/MLB); a API do Bling exige que o campo não fique vazio.
-    itens.push({
-      ...item,
-      codigo: product.codigo || item.codigo || String(product.id),
-      descricao: TARGET_FISCAL_PRODUCT,
-      produto: { id: Number(product.id) },
-      unidade: product.unidade || item.unidade || "UN",
-      ncm: TARGET_NCM
-    });
-    changed = true;
   }
 
   if (!changed) return options;
@@ -259,6 +425,7 @@ async function enrichNfeOptions(path, options = {}) {
     ...options,
     body: JSON.stringify({
       ...payload,
+      contato: contact,
       itens
     })
   };
@@ -283,5 +450,6 @@ function installBlingFiscalProductLink() {
 module.exports = {
   installBlingFiscalProductLink,
   findRegisteredBlingProduct,
-  looksLikeComputerDescription
+  looksLikeComputerDescription,
+  extractCustomerFiscalData
 };
