@@ -3,9 +3,11 @@ const { supabase } = require("../db/supabase");
 const { sincronizarPedidoPorId } = require("../services/mercadolivre");
 const { processStockForMarketplaceOrder } = require("../services/stock");
 const {
-  processarNotificacaoMensagemML,
   processarNotificacaoClaimML
 } = require("../services/sac");
+const {
+  agendarAutoRespostaMensagemML
+} = require("../services/ml-sac-auto-reply");
 
 router.post(
   "/webhooks/mercadolivre",
@@ -21,6 +23,14 @@ router.post(
       payload.topic,
       payload.resource
     );
+
+    // Mensagens pós-venda não dependem mais de sac_threads/sac_messages.
+    // Agenda a IA imediatamente, antes até da auditoria do webhook no banco,
+    // para uma eventual falha de persistência não impedir o atendimento.
+    if (payload.topic === "messages") {
+      const autoReply = agendarAutoRespostaMensagemML(payload);
+      console.log("[SAC ML IA] webhook:", autoReply);
+    }
 
     try {
       const {
@@ -86,12 +96,6 @@ router.post(
               console.error("Erro atualizando estoque pelo webhook:", stockError);
             }
           }
-        }
-
-
-        // Mensagens pós-venda
-        if (payload.topic === "messages") {
-          await processarNotificacaoMensagemML(payload);
         }
 
         // Reclamações e ações em reclamações
