@@ -120,6 +120,7 @@ app.use(require("./src/routes/webhooks-mercadolivre"));
 app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-sac-history-links"));
+app.use(require("./src/routes/ml-sac-live"));
 app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/stock"));
