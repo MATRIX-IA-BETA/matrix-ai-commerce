@@ -65,6 +65,16 @@ function sendMatrixPage(fileName) {
         );
       }
 
+      if (
+        fileName === "sac-ml.html" &&
+        !html.includes("sac-ml-ai-review.js")
+      ) {
+        html = html.replace(
+          "</head>",
+          `\n<script defer src="/sac-ml-ai-review.js?v=1"></script>\n</head>`
+        );
+      }
+
       res.set({
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
         Pragma: "no-cache",
@@ -121,6 +131,7 @@ app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-sac-history-links"));
 app.use(require("./src/routes/ml-sac-live"));
+app.use(require("./src/routes/ml-sac-ai-review"));
 app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/stock"));
