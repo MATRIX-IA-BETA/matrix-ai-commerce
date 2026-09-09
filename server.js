@@ -40,7 +40,7 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=2">\n<script defer src="/matrix-global-nav.js?v=2"></script>\n`;
+const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=3">\n<script defer src="/matrix-global-nav.js?v=3"></script>\n`;
 
 function sendMatrixPage(fileName) {
   return (req, res, next) => {
@@ -93,6 +93,10 @@ app.get("/sac-central.html", sendMatrixPage("sac-central.html"));
 app.get("/sac/ml", sendMatrixPage("sac-ml.html"));
 app.get("/sac-ml.html", sendMatrixPage("sac-ml.html"));
 
+// Central dedicada às reclamações/claims do Mercado Livre.
+app.get("/sac/reclamacoes", sendMatrixPage("reclamacoes-ml.html"));
+app.get("/reclamacoes-ml.html", sendMatrixPage("reclamacoes-ml.html"));
+
 // Perguntas pré-venda dos anúncios Mercado Livre.
 app.get("/sac/perguntas", sendMatrixPage("mercadolivre-perguntas.html"));
 app.get("/sac/perguntas-ml", sendMatrixPage("mercadolivre-perguntas.html"));
@@ -117,6 +121,7 @@ app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-sac-history-links"));
 app.use(require("./src/routes/ml-questions-sac"));
+app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
 
