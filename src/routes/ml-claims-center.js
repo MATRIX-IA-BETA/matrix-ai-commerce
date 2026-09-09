@@ -85,7 +85,7 @@ function productInfo(order) {
   };
 }
 
-async function fetchAllClaims(account) {
+async function fetchClaimsByStatus(account, status) {
   const claims = [];
   let offset = 0;
   let total = null;
@@ -95,6 +95,7 @@ async function fetchAllClaims(account) {
     const params = new URLSearchParams({
       "players.user_id": String(account.user_id),
       "players.role": "respondent",
+      status,
       limit: String(limit),
       offset: String(offset),
       sort: "last_updated:desc"
@@ -107,7 +108,9 @@ async function fetchAllClaims(account) {
     const data = await readJson(response);
 
     if (!response.ok) {
-      const error = new Error(`Erro buscando reclamações no Mercado Livre: ${JSON.stringify(data)}`);
+      const error = new Error(
+        `Erro buscando reclamações ${status} no Mercado Livre: ${JSON.stringify(data)}`
+      );
       error.httpStatus = response.status;
       throw error;
     }
@@ -129,11 +132,29 @@ async function fetchAllClaims(account) {
     if (total != null && offset >= total) break;
   }
 
+  return {
+    claims,
+    reportedTotal: total == null ? claims.length : total,
+    truncated: total != null && claims.length < total
+  };
+}
+
+async function fetchAllClaims(account) {
+  // A API de Claims exige pelo menos um filtro funcional além da paginação.
+  // Para montar a visão "Todas" sem perder encerradas, fazemos duas buscas
+  // válidas (opened e closed), ambas restritas ao vendedor/respondent, e unimos.
+  const batches = [];
+  for (const status of ["opened", "closed"]) {
+    batches.push(await fetchClaimsByStatus(account, status));
+  }
+
   const dedup = new Map();
-  for (const claim of claims) {
-    const id = claim?.id ?? claim?.claim_id;
-    if (id == null) continue;
-    dedup.set(String(id), claim);
+  for (const batch of batches) {
+    for (const claim of batch.claims) {
+      const id = claim?.id ?? claim?.claim_id;
+      if (id == null) continue;
+      dedup.set(String(id), claim);
+    }
   }
 
   const list = [...dedup.values()].sort((a, b) =>
@@ -142,8 +163,8 @@ async function fetchAllClaims(account) {
 
   return {
     claims: list,
-    reportedTotal: total == null ? list.length : total,
-    truncated: total != null && list.length < total
+    reportedTotal: batches.reduce((sum, batch) => sum + Number(batch.reportedTotal || 0), 0),
+    truncated: batches.some(batch => batch.truncated)
   };
 }
 
