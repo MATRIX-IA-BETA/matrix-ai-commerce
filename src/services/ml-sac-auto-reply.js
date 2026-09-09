@@ -264,20 +264,26 @@ function sharedKnowledgeText(knowledge, experiences) {
   return `CONHECIMENTO OFICIAL DA SHOP MATRIX:\n${official}\n\nEXPERIÊNCIAS DE ATENDIMENTOS JÁ RESOLVIDOS:\n${solved}`;
 }
 
-async function generateReply({ order, messages, products }) {
+async function generateReply({ order, messages, products, sellerId }) {
   if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY não configurada.");
 
   const { knowledge, experiences } = await loadSharedKnowledge();
   const history = messages
     .slice(-14)
     .map(m => {
-      const who = cleanId(m?.from?.user_id) === cleanId(order?.raw_data?.seller?.id) ? "SHOP MATRIX" : "CLIENTE";
-      return `${who}: ${textOf(m).slice(0, 900)}`;
+      const who = cleanId(m?.from?.user_id) === cleanId(sellerId) ? "SHOP MATRIX" : "CLIENTE";
+      const content = textOf(m).slice(0, 900);
+      return content ? `${who}: ${content}` : null;
     })
-    .filter(line => !line.endsWith(": "))
+    .filter(Boolean)
     .join("\n");
 
-  const lastInbound = [...messages].reverse().find(m => textOf(m));
+  const lastInbound = [...messages]
+    .reverse()
+    .find(m => cleanId(m?.from?.user_id) !== cleanId(sellerId) && textOf(m));
+
+  if (!lastInbound) throw new Error("Não encontrei mensagem de texto do cliente para responder.");
+
   const input = `
 PEDIDO MERCADO LIVRE: ${order?.marketplace_order_id || "não identificado"}
 COMPRADOR: ${order?.buyer_nickname || order?.raw_data?.buyer?.nickname || "não informado"}
@@ -314,11 +320,16 @@ Produza a resposta final ao cliente agora.
     throw new Error(data?.error?.message || "OpenAI recusou a resposta do SAC ML.");
   }
 
-  const text = String(
-    data?.output_text ||
-    data?.output?.flatMap?.(x => x?.content || []).find?.(c => c?.type === "output_text")?.text ||
-    ""
-  ).trim();
+  let text = String(data?.output_text || "").trim();
+  if (!text) {
+    const parts = [];
+    for (const item of data?.output || []) {
+      for (const content of item?.content || []) {
+        if (content?.type === "output_text" && content?.text) parts.push(content.text);
+      }
+    }
+    text = parts.join("\n").trim();
+  }
 
   if (!text) throw new Error("A IA não retornou uma resposta para o SAC ML.");
   return text.slice(0, 350);
@@ -377,7 +388,7 @@ async function processPackAutoReply(packId) {
 
     // Regra pedida: a IA só pode responder depois de consultar o anúncio e sua descrição.
     const products = await buildPurchasedProductContext(order, messages, account);
-    const reply = await generateReply({ order, messages, products });
+    const reply = await generateReply({ order, messages, products, sellerId });
     const result = await sendReply(safePackId, reply, account);
     handledMessages.set(lastMessageId, Date.now());
 
