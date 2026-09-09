@@ -40,7 +40,7 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=1">\n<script defer src="/matrix-global-nav.js?v=1"></script>\n`;
+const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=2">\n<script defer src="/matrix-global-nav.js?v=2"></script>\n`;
 
 function sendMatrixPage(fileName) {
   return (req, res, next) => {
@@ -77,7 +77,11 @@ app.get("/sac/mobile", sendMatrixPage("sac-central.html"));
 app.get("/sac/mobile.html", sendMatrixPage("sac-central.html"));
 app.get("/sac-central.html", sendMatrixPage("sac-central.html"));
 
-// SAC - Perguntas Mercado Livre.
+// SAC Mercado Livre - mensagens pós-compra.
+app.get("/sac/ml", sendMatrixPage("sac-ml.html"));
+app.get("/sac-ml.html", sendMatrixPage("sac-ml.html"));
+
+// Perguntas pré-venda dos anúncios Mercado Livre.
 app.get("/sac/perguntas", sendMatrixPage("mercadolivre-perguntas.html"));
 app.get("/sac/perguntas-ml", sendMatrixPage("mercadolivre-perguntas.html"));
 app.get("/mercadolivre-perguntas.html", sendMatrixPage("mercadolivre-perguntas.html"));
