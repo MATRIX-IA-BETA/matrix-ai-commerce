@@ -24,6 +24,14 @@ router.post(
       payload.resource
     );
 
+    // Mensagens pós-venda não dependem mais de sac_threads/sac_messages.
+    // Agenda a IA imediatamente, antes até da auditoria do webhook no banco,
+    // para uma eventual falha de persistência não impedir o atendimento.
+    if (payload.topic === "messages") {
+      const autoReply = agendarAutoRespostaMensagemML(payload);
+      console.log("[SAC ML IA] webhook:", autoReply);
+    }
+
     try {
       const {
         data: event,
@@ -88,15 +96,6 @@ router.post(
               console.error("Erro atualizando estoque pelo webhook:", stockError);
             }
           }
-        }
-
-
-        // Mensagens pós-venda: a Central SAC ML agora trabalha direto com a API
-        // do Mercado Livre. A mesma IA operacional usada no WhatsApp é agendada
-        // aqui, com debounce para juntar mensagens consecutivas do cliente.
-        if (payload.topic === "messages") {
-          const autoReply = agendarAutoRespostaMensagemML(payload);
-          console.log("[SAC ML IA] webhook:", autoReply);
         }
 
         // Reclamações e ações em reclamações
