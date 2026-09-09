@@ -2,6 +2,10 @@ const router = require("express").Router();
 const { supabase } = require("../db/supabase");
 const { nowIso } = require("../utils/common");
 const { blingFetch } = require("../services/bling");
+const {
+  getMercadoLivreAccount,
+  mercadoLivreFetch
+} = require("../services/mercadolivre");
 
 function digitsOnly(value) {
   return String(value ?? "").replace(/\D/g, "");
@@ -15,6 +19,18 @@ async function readJson(response) {
   } catch {
     return { raw: text };
   }
+}
+
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function finiteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function recursiveFindAccessKey(value, depth = 0) {
@@ -64,13 +80,6 @@ function recursiveFindAccessKey(value, depth = 0) {
   return null;
 }
 
-function normalizeText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
 function extractInfo(payload) {
   const d = payload?.data || payload || {};
   const candidates = [
@@ -104,6 +113,97 @@ function extractInfo(payload) {
     authorized,
     rejected,
     situationText
+  };
+}
+
+function marketplaceCancellationInfo(order) {
+  const status = normalizeText(order?.status);
+  const statusDetail = normalizeText(
+    order?.status_detail ??
+    order?.status_detail?.description ??
+    order?.status_detail?.code
+  );
+  const tags = Array.isArray(order?.tags)
+    ? order.tags.map(normalizeText)
+    : [];
+
+  const paidAmount = finiteNumber(order?.paid_amount);
+  const totalAmount = finiteNumber(order?.total_amount);
+
+  const explicitlyCancelled =
+    /cancel/.test(status) ||
+    /cancel/.test(statusDetail) ||
+    tags.some(tag => /cancel/.test(tag));
+
+  const zeroedSale =
+    paidAmount != null && paidAmount <= 0;
+
+  return {
+    cancelled: explicitlyCancelled || zeroedSale,
+    explicitlyCancelled,
+    zeroedSale,
+    status: order?.status || null,
+    statusDetail: order?.status_detail || null,
+    paidAmount,
+    totalAmount
+  };
+}
+
+async function saveFreshMarketplaceOrder(orderId, order) {
+  const update = {
+    status: order?.status || null,
+    paid_amount: finiteNumber(order?.paid_amount),
+    total_amount: finiteNumber(order?.total_amount),
+    raw_data: order,
+    updated_at: nowIso()
+  };
+
+  const { error } = await supabase
+    .from("marketplace_orders")
+    .update(update)
+    .eq("marketplace", "mercadolivre")
+    .eq("marketplace_order_id", String(orderId));
+
+  if (error) {
+    console.warn(
+      `[ML fiscal guard] Pedido ${orderId} consultado no ML, mas falhou ao atualizar cache local:`,
+      error.message
+    );
+  }
+}
+
+async function checkMarketplaceOrderBeforeNfe(orderId) {
+  const account = await getMercadoLivreAccount();
+  if (!account) {
+    const e = new Error(
+      "Conta Mercado Livre não conectada. A Matrix não conseguiu confirmar se a venda continua válida e bloqueou a NF-e por segurança."
+    );
+    e.httpStatus = 503;
+    throw e;
+  }
+
+  const { response } = await mercadoLivreFetch(
+    `/orders/${encodeURIComponent(String(orderId))}`,
+    account
+  );
+  const order = await readJson(response);
+
+  if (!response.ok) {
+    const e = new Error(
+      `Mercado Livre recusou a conferência do pedido antes da NF-e. A emissão foi bloqueada por segurança. ${
+        order?.message || order?.error || `HTTP ${response.status}`
+      }`
+    );
+    e.httpStatus = response.status >= 500 ? 503 : response.status;
+    e.detail = order;
+    throw e;
+  }
+
+  await saveFreshMarketplaceOrder(orderId, order);
+
+  return {
+    order,
+    ...marketplaceCancellationInfo(order)
   };
 }
 
@@ -245,6 +345,24 @@ router.post("/bling/nfe/emit/from-order/:orderId", async (req, res, next) => {
   const orderId = String(req.params.orderId);
 
   try {
+    // Regra de segurança principal: antes de tocar no Bling, consulta o pedido
+    // diretamente no Mercado Livre. Não confiamos apenas no valor/status salvo
+    // localmente porque o cliente pode ter cancelado depois da última sincronização.
+    const marketplace = await checkMarketplaceOrderBeforeNfe(orderId);
+
+    if (marketplace.cancelled) {
+      return res.status(409).json({
+        sucesso: false,
+        cancelada: true,
+        marketplace_status: marketplace.status,
+        paid_amount: marketplace.paidAmount,
+        mensagem:
+          marketplace.explicitlyCancelled
+            ? "Venda cancelada no Mercado Livre. A Matrix bloqueou a emissão da NF-e."
+            : "Venda com valor pago zerado no Mercado Livre. A Matrix tratou o pedido como cancelado e bloqueou a emissão da NF-e."
+      });
+    }
+
     const { data: fiscal, error } = await supabase
       .from("fiscal_documents")
       .select("*")
@@ -270,8 +388,15 @@ router.post("/bling/nfe/emit/from-order/:orderId", async (req, res, next) => {
     // tentar o envio novamente.
     return next();
   } catch (error) {
-    console.warn(`[Bling emit guard] Falha no pré-check do pedido ${orderId}:`, error.message);
-    return next();
+    console.warn(`[Bling emit guard] Pré-check bloqueou o pedido ${orderId}:`, error.message);
+
+    // Diferente do guard antigo, falha na consulta ao ML NÃO pode cair em next().
+    // Se não conseguimos confirmar que a venda segue válida, não emitimos.
+    return res.status(error.httpStatus || 503).json({
+      sucesso: false,
+      mensagem: error.message,
+      detalhe: error.detail || null
+    });
   }
 });
 
