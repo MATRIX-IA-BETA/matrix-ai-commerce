@@ -40,7 +40,7 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=3">\n<script defer src="/matrix-global-nav.js?v=3"></script>\n`;
+const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=4"></script>\n`;
 
 function sendMatrixPage(fileName) {
   return (req, res, next) => {
