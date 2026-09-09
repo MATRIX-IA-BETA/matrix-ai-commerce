@@ -71,7 +71,7 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/sac-ml-ai-review.js?v=1"></script>\n</head>`
+          `\n<script defer src="/sac-ml-ai-review.js?v=2"></script>\n</head>`
         );
       }
 
