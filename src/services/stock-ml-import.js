@@ -64,7 +64,10 @@ async function listItemIds(account) {
 }
 
 async function fetchItem(itemId, account) {
-  const { response } = await mercadoLivreFetch(`/items/${encodeURIComponent(itemId)}`, account);
+  const { response } = await mercadoLivreFetch(
+    `/items/${encodeURIComponent(itemId)}?include_attributes=all`,
+    account
+  );
   const data = await response.json();
   if (!response.ok) {
     throw new Error(`Falha consultando anúncio ${itemId}: ${JSON.stringify(data)}`);
@@ -72,18 +75,21 @@ async function fetchItem(itemId, account) {
   return data;
 }
 
-async function upsertKit({ sku, title, item, variation, account }) {
+async function findProductBySku(sku) {
+  const { data, error } = await supabase
+    .from("inventory_products")
+    .select("id,sku,name,product_type,metadata")
+    .eq("sku", sku)
+    .maybeSingle();
+  if (error) throw new Error(`Erro buscando SKU ${sku}: ${error.message}`);
+  return data;
+}
+
+async function upsertKit({ sku, title, item, variation, account, retryOnConflict = true }) {
   const normalizedSku = clean(sku);
   const itemId = clean(item?.id);
   const variationId = variation?.id != null ? clean(variation.id) : null;
-
-  const { data: existing, error: findError } = await supabase
-    .from("inventory_products")
-    .select("id,sku,name,product_type,metadata")
-    .eq("sku", normalizedSku)
-    .maybeSingle();
-
-  if (findError) throw new Error(`Erro buscando SKU ${normalizedSku}: ${findError.message}`);
+  const existing = await findProductBySku(normalizedSku);
 
   const itemRef = {
     item_id: itemId,
@@ -105,7 +111,7 @@ async function upsertKit({ sku, title, item, variation, account }) {
       .update({
         name: clean(title) || existing.name,
         product_type: "kit",
-        category: "PC Mercado Livre",
+        category: "Mercado Livre",
         metadata: {
           ...(existing.metadata || {}),
           source: "mercadolivre",
@@ -124,7 +130,7 @@ async function upsertKit({ sku, title, item, variation, account }) {
       .insert({
         sku: normalizedSku,
         name: clean(title) || normalizedSku,
-        category: "PC Mercado Livre",
+        category: "Mercado Livre",
         product_type: "kit",
         unit: "UN",
         minimum_stock: 0,
@@ -138,7 +144,14 @@ async function upsertKit({ sku, title, item, variation, account }) {
       })
       .select("id,sku")
       .single();
-    if (error) throw new Error(`Erro criando kit ${normalizedSku}: ${error.message}`);
+
+    if (error) {
+      const duplicate = String(error.message || "").toLowerCase().includes("duplicate key");
+      if (duplicate && retryOnConflict) {
+        return upsertKit({ sku, title, item, variation, account, retryOnConflict: false });
+      }
+      throw new Error(`Erro criando kit ${normalizedSku}: ${error.message}`);
+    }
     product = data;
   }
 
