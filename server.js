@@ -40,7 +40,7 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=7"></script>\n`;
+const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=8"></script>\n`;
 
 function sendMatrixPage(fileName) {
   return (req, res, next) => {
@@ -140,6 +140,10 @@ app.get("/finance.html", sendMatrixPage("finance.html"));
 app.get("/stock", sendMatrixPage("stock.html"));
 app.get("/stock.html", sendMatrixPage("stock.html"));
 
+// ERP integrado com o histórico operacional do SICNET.
+app.get("/erp", sendMatrixPage("erp.html"));
+app.get("/erp.html", sendMatrixPage("erp.html"));
+
 // Envio/atualização manual de XML de NF-e para o Mercado Livre.
 app.get("/ml/xml", sendMatrixPage("xml-ml.html"));
 app.get("/xml-ml.html", sendMatrixPage("xml-ml.html"));
@@ -172,6 +176,7 @@ app.use(require("./src/routes/finance"));
 app.use(require("./src/routes/finance-open-finance"));
 app.use(require("./src/routes/stock-dashboard"));
 app.use(require("./src/routes/stock"));
+app.use(require("./src/routes/erp"));
 app.use(require("./src/routes/customers"));
 
 // V3: prioriza CPF/CNPJ do billing-info do Mercado Livre para localizar
