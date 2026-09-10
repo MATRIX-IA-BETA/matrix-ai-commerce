@@ -5,6 +5,7 @@ const { nowIso } = require("../utils/common");
 const PLUGGY_API_BASE = "https://api.pluggy.ai";
 const REQUEST_TIMEOUT_MS = 20000;
 const API_KEY_CACHE_MS = 90 * 60 * 1000;
+const MATRIX_PLUGGY_CLIENT_USER_ID = "matrix-ai-commerce";
 let cachedApiKey = null;
 let cachedApiKeyAt = 0;
 
@@ -109,6 +110,28 @@ async function upsertConnection(itemId, item = {}) {
     const { error } = await supabase.from("financial_connections").insert(record);
     if (error) throw new Error(`Erro salvando conexão financeira: ${error.message}`);
   }
+}
+
+async function updateConnectionFromWebhook(itemId, status, event, payload = {}) {
+  if (!itemId) return;
+  const { data: rows } = await supabase
+    .from("financial_connections")
+    .select("id,metadata")
+    .eq("provider", "pluggy")
+    .eq("external_connection_id", String(itemId))
+    .limit(1);
+
+  if (!rows?.[0]?.id) return;
+  const metadata = {
+    ...(rows[0].metadata || {}),
+    last_webhook_event: event || null,
+    last_webhook_event_id: payload?.eventId || null,
+    last_webhook_error: payload?.error || null,
+    last_webhook_at: nowIso()
+  };
+  const patch = { status, metadata, updated_at: nowIso() };
+  if (status === "connected") patch.last_sync_at = nowIso();
+  await supabase.from("financial_connections").update(patch).eq("id", rows[0].id);
 }
 
 async function upsertPluggyAccounts(itemId, item, accounts) {
@@ -240,7 +263,7 @@ router.post("/api/finance/open-finance/connect-token", async (req, res) => {
       method: "POST",
       body: JSON.stringify({
         options: {
-          clientUserId: "matrix-ai-commerce",
+          clientUserId: MATRIX_PLUGGY_CLIENT_USER_ID,
           avoidDuplicates: true
         }
       })
@@ -251,6 +274,52 @@ router.post("/api/finance/open-finance/connect-token", async (req, res) => {
   } catch (error) {
     res.status(error.httpStatus || 500).json({ sucesso: false, mensagem: error.message });
   }
+});
+
+// Endpoint público informado no Dashboard da Pluggy. A resposta 2xx é enviada
+// imediatamente; o processamento pesado é feito depois, para cumprir o limite
+// curto de resposta dos webhooks e evitar reentregas desnecessárias.
+router.post("/api/finance/open-finance/webhook", (req, res) => {
+  const payload = req.body || {};
+  const event = String(payload.event || "").trim();
+  const itemId = payload.itemId ? String(payload.itemId) : null;
+  const clientUserId = payload.clientUserId ? String(payload.clientUserId) : null;
+
+  res.status(200).json({ received: true });
+
+  if (clientUserId && clientUserId !== MATRIX_PLUGGY_CLIENT_USER_ID) {
+    console.warn("[Pluggy webhook] clientUserId ignorado:", clientUserId, event);
+    return;
+  }
+  if (!itemId) return;
+
+  setImmediate(async () => {
+    try {
+      if (event === "item/created" || event === "item/updated") {
+        await syncItem(itemId);
+        await updateConnectionFromWebhook(itemId, "connected", event, payload);
+        return;
+      }
+      if (event === "item/error") {
+        await updateConnectionFromWebhook(itemId, "error", event, payload);
+        return;
+      }
+      if (event === "item/waiting_user_input" || event === "item/waiting_user_action") {
+        await updateConnectionFromWebhook(itemId, "pending", event, payload);
+        return;
+      }
+      if (event === "item/deleted") {
+        await updateConnectionFromWebhook(itemId, "deleted", event, payload);
+        await supabase
+          .from("financial_accounts")
+          .update({ active: false, updated_at: nowIso() })
+          .eq("source", "pluggy")
+          .contains("metadata", { pluggy_item_id: itemId });
+      }
+    } catch (error) {
+      console.error("[Pluggy webhook] erro processando", event, itemId, error.message);
+    }
+  });
 });
 
 router.post("/api/finance/open-finance/connected", async (req, res) => {
