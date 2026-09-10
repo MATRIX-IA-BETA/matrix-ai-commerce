@@ -81,7 +81,7 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
+          `\n<script defer src="/finance-enhancements.js?v=1"></script>\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
         );
       }
 
@@ -173,6 +173,7 @@ app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/ml-xml-upload"));
 app.use(require("./src/routes/finance"));
+app.use(require("./src/routes/finance-ml-funds"));
 app.use(require("./src/routes/finance-open-finance"));
 app.use(require("./src/routes/stock-dashboard"));
 app.use(require("./src/routes/stock"));
