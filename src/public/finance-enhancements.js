@@ -5,7 +5,7 @@
 
   const $ = id => document.getElementById(id);
   const brl = value => Number(value || 0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
-  const esc = value => String(value ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[m]));
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
   const parseMoney = value => Number(String(value ?? '').replace(/\./g,'').replace(',','.'));
 
   async function api(path, options = {}) {
