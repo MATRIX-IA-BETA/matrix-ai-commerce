@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const { supabase } = require("../db/supabase");
 const { getMercadoLivreAccount, mercadoLivreFetch } = require("../services/mercadolivre");
 
 const MAX_XML_BYTES = 1024 * 1024;
@@ -12,6 +13,19 @@ function extractTag(xml, tag) {
   return match ? match[1].trim() : null;
 }
 
+function extractBlock(xml, tag) {
+  const match = String(xml || "").match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match ? match[1] : "";
+}
+
+function extractAccessKey(xml) {
+  const fromProtocol = cleanId(extractTag(xml, "chNFe"));
+  if (fromProtocol.length === 44) return fromProtocol;
+
+  const infMatch = String(xml || "").match(/<infNFe\b[^>]*\bId=["']NFe(\d{44})["']/i);
+  return infMatch ? infMatch[1] : null;
+}
+
 function validateXml(xml) {
   const text = String(xml || "").trim();
   if (!text) throw new Error("Selecione um arquivo XML antes de enviar.");
@@ -22,10 +36,92 @@ function validateXml(xml) {
   return text;
 }
 
+function xmlIdentity(xml) {
+  const dest = extractBlock(xml, "dest");
+  const accessKey = extractAccessKey(xml);
+  const number = extractTag(xml, "nNF");
+  const series = extractTag(xml, "serie");
+  return {
+    access_key: accessKey,
+    number: number || null,
+    series: series || null,
+    model: extractTag(xml, "mod") || null,
+    amount: extractTag(xml, "vNF") || null,
+    recipient_name: extractTag(dest, "xNome") || null,
+    recipient_document: cleanId(extractTag(dest, "CNPJ") || extractTag(dest, "CPF")) || null
+  };
+}
+
 async function readJsonOrText(response) {
   const raw = await response.text();
   if (!raw) return {};
   try { return JSON.parse(raw); } catch (_) { return { raw }; }
+}
+
+async function marketplaceOrderExists(orderId) {
+  const id = cleanId(orderId);
+  if (!id) return false;
+  const { data, error } = await supabase
+    .from("marketplace_orders")
+    .select("marketplace_order_id")
+    .eq("marketplace", "mercadolivre")
+    .eq("marketplace_order_id", id)
+    .limit(1);
+  if (error) throw new Error(`Erro consultando pedidos locais: ${error.message}`);
+  return Boolean(data?.length);
+}
+
+async function findOrderFromXml(xml) {
+  const identity = xmlIdentity(xml);
+
+  // 1) Melhor vínculo: chave de acesso gravada quando a NF-e foi emitida.
+  if (identity.access_key) {
+    const { data, error } = await supabase
+      .from("fiscal_documents")
+      .select("marketplace_order_id,nfe_access_key,nfe_number,nfe_series,updated_at")
+      .eq("nfe_access_key", identity.access_key)
+      .order("updated_at", { ascending: false })
+      .limit(5);
+    if (error) throw new Error(`Erro consultando vínculo fiscal: ${error.message}`);
+    const orderId = cleanId(data?.[0]?.marketplace_order_id);
+    if (orderId) return { order_id: orderId, source: "nfe_access_key", identity };
+  }
+
+  // 2) Fallback: número + série da NF-e, tolerando zeros à esquerda no número.
+  if (identity.number) {
+    const rawNumber = String(identity.number).trim();
+    const normalizedNumber = String(Number(rawNumber));
+    const candidates = [...new Set([rawNumber, normalizedNumber].filter(v => v && v !== "NaN"))];
+    const { data, error } = await supabase
+      .from("fiscal_documents")
+      .select("marketplace_order_id,nfe_number,nfe_series,updated_at")
+      .in("nfe_number", candidates)
+      .order("updated_at", { ascending: false })
+      .limit(20);
+    if (error) throw new Error(`Erro consultando número da NF-e: ${error.message}`);
+
+    const wantedSeries = String(Number(identity.series || 0));
+    const match = (data || []).find(row => {
+      const rowNumber = String(Number(row?.nfe_number));
+      const rowSeries = String(Number(row?.nfe_series || 0));
+      return rowNumber === normalizedNumber && (!identity.series || rowSeries === wantedSeries);
+    });
+    const orderId = cleanId(match?.marketplace_order_id);
+    if (orderId) return { order_id: orderId, source: "nfe_number_series", identity };
+  }
+
+  // 3) Algumas integrações gravam o número do pedido em observações do XML.
+  const embedded = [...new Set(String(xml).match(/\b2000\d{12}\b/g) || [])];
+  for (const candidate of embedded) {
+    if (await marketplaceOrderExists(candidate)) {
+      return { order_id: candidate, source: "xml_order_reference", identity };
+    }
+  }
+
+  throw new Error(
+    `Não consegui localizar automaticamente o pedido referente à NF-e${identity.number ? ` ${identity.number}` : ""}. ` +
+    "A Matrix tentou pela chave de acesso, número/série e referência de pedido dentro do XML."
+  );
 }
 
 async function loadOrderContext(orderId, account) {
@@ -76,6 +172,26 @@ async function loadOrderContext(orderId, account) {
   };
 }
 
+router.post("/api/ml/xml-upload/identify", async (req, res) => {
+  try {
+    const xml = validateXml(req.body?.xml);
+    const match = await findOrderFromXml(xml);
+    const account = await getMercadoLivreAccount();
+    if (!account) return res.status(404).json({ sucesso: false, mensagem: "Conta Mercado Livre não conectada." });
+    const context = await loadOrderContext(match.order_id, account);
+    res.json({
+      sucesso: true,
+      ...context,
+      modo: context.invoice?.id ? "update" : "new",
+      xml: match.identity,
+      localizado_por: match.source
+    });
+  } catch (error) {
+    res.status(400).json({ sucesso: false, mensagem: error.message });
+  }
+});
+
+// Mantida por compatibilidade com links antigos, mas a tela nova não exige o pedido.
 router.get("/api/ml/xml-upload/order/:orderId", async (req, res) => {
   try {
     const account = await getMercadoLivreAccount();
@@ -89,9 +205,9 @@ router.get("/api/ml/xml-upload/order/:orderId", async (req, res) => {
 
 router.post("/api/ml/xml-upload/send", async (req, res) => {
   try {
-    const orderId = cleanId(req.body?.order_id);
     const xml = validateXml(req.body?.xml);
-    if (!orderId) return res.status(400).json({ sucesso: false, mensagem: "Informe o número do pedido." });
+    const match = await findOrderFromXml(xml);
+    const orderId = match.order_id;
 
     const account = await getMercadoLivreAccount();
     if (!account) return res.status(404).json({ sucesso: false, mensagem: "Conta Mercado Livre não conectada." });
@@ -125,7 +241,15 @@ router.post("/api/ml/xml-upload/send", async (req, res) => {
 
     let refreshed = null;
     try { refreshed = await loadOrderContext(orderId, account); } catch (_) {}
-    res.json({ sucesso: true, modo: method === "PUT" ? "update" : "new", mensagem: method === "PUT" ? "XML atualizado no Mercado Livre com sucesso." : "XML enviado ao Mercado Livre com sucesso.", resultado_ml: data, contexto: refreshed });
+    res.json({
+      sucesso: true,
+      order_id: orderId,
+      localizado_por: match.source,
+      modo: method === "PUT" ? "update" : "new",
+      mensagem: method === "PUT" ? "XML atualizado no Mercado Livre com sucesso." : "XML enviado ao Mercado Livre com sucesso.",
+      resultado_ml: data,
+      contexto: refreshed
+    });
   } catch (error) {
     res.status(400).json({ sucesso: false, mensagem: error.message });
   }
