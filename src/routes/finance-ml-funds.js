@@ -1,14 +1,16 @@
-const crypto = require("crypto");
 const router = require("express").Router();
 
 const { supabase } = require("../db/supabase");
-const { env } = require("../config/env");
+const {
+  getMercadoLivreAccount,
+  mercadoLivreFetch
+} = require("../services/mercadolivre");
 
-const CLIENT_ID = env.MERCADOLIVRE_CLIENT_ID;
-const CLIENT_SECRET = env.MERCADOLIVRE_CLIENT_SECRET;
-const REDIRECT_URI = env.MERCADOLIVRE_REDIRECT_URI;
-const AUTO_SYNC_MS = 5 * 60 * 1000;
-const oauthSessions = new Map();
+const AUTO_SYNC_MS = 15 * 60 * 1000;
+const LOOKBACK_DAYS = 60;
+const BILLING_BATCH = 60;
+const CLAIM_PAGE_SIZE = 50;
+const MAX_OPEN_CLAIMS = 500;
 
 let syncInFlight = null;
 let lastSyncAt = 0;
@@ -19,11 +21,6 @@ const num = value => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const money = value => Number(num(value).toFixed(2));
-const base64url = buffer => buffer
-  .toString("base64")
-  .replace(/=/g, "")
-  .replace(/\+/g, "-")
-  .replace(/\//g, "_");
 
 async function readJson(response) {
   const text = await response.text();
@@ -35,252 +32,326 @@ async function readJson(response) {
   }
 }
 
-function amountFrom(value) {
-  if (Number.isFinite(Number(value))) return Math.abs(Number(value));
-  if (!value || typeof value !== "object") return null;
-  for (const key of ["amount", "balance", "value", "total_amount", "unavailable_balance"]) {
-    if (Number.isFinite(Number(value[key]))) return Math.abs(Number(value[key]));
+async function mapLimit(values, limit, worker) {
+  const result = new Array(values.length);
+  let cursor = 0;
+  async function runner() {
+    while (cursor < values.length) {
+      const index = cursor++;
+      try {
+        result[index] = await worker(values[index], index);
+      } catch (error) {
+        result[index] = { __error: error };
+      }
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(limit, values.length || 1) }, runner));
+  return result;
+}
+
+function orderTotalQuantity(order) {
+  const raw = order?.raw_data || {};
+  const items = Array.isArray(raw.order_items) ? raw.order_items : [];
+  const total = items.reduce((sum, item) => sum + Math.max(0, num(item?.quantity)), 0);
+  return total > 0 ? total : 1;
+}
+
+async function loadRecentPaidOrders() {
+  const since = new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString();
+  const rows = [];
+  const pageSize = 1000;
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("marketplace_orders")
+      .select("marketplace_order_id,status,date_created,paid_amount,total_amount,raw_data")
+      .eq("marketplace", "mercadolivre")
+      .eq("status", "paid")
+      .gte("date_created", since)
+      .order("date_created", { ascending: false })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(`Pedidos recentes ML: ${error.message}`);
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
+}
+
+async function loadOrdersByIds(orderIds) {
+  const map = new Map();
+  const ids = [...new Set(orderIds.filter(Boolean).map(String))];
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const { data, error } = await supabase
+      .from("marketplace_orders")
+      .select("marketplace_order_id,status,date_created,paid_amount,total_amount,raw_data")
+      .eq("marketplace", "mercadolivre")
+      .in("marketplace_order_id", chunk);
+    if (error) throw new Error(`Pedidos por ID ML: ${error.message}`);
+    for (const row of data || []) map.set(String(row.marketplace_order_id), row);
+  }
+  return map;
+}
+
+async function fetchOpenClaims(account) {
+  const sellerId = String(account.user_id || account.account_id || "").trim();
+  const claims = [];
+  let offset = 0;
+  let reportedTotal = null;
+
+  while (claims.length < MAX_OPEN_CLAIMS) {
+    const limit = Math.min(CLAIM_PAGE_SIZE, MAX_OPEN_CLAIMS - claims.length);
+    const params = new URLSearchParams({
+      "players.user_id": sellerId,
+      "players.role": "respondent",
+      status: "opened",
+      limit: String(limit),
+      offset: String(offset),
+      sort: "last_updated:desc"
+    });
+
+    const { response } = await mercadoLivreFetch(
+      `/post-purchase/v1/claims/search?${params.toString()}`,
+      account
+    );
+    const data = await readJson(response);
+    if (!response.ok) throw new Error(`Reclamações ML HTTP ${response.status}`);
+
+    const page = Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.results)
+        ? data.results
+        : [];
+
+    if (reportedTotal == null && Number.isFinite(Number(data?.paging?.total))) {
+      reportedTotal = Number(data.paging.total);
+    }
+
+    claims.push(...page);
+    offset += page.length;
+    if (!page.length || page.length < limit) break;
+    if (reportedTotal != null && offset >= reportedTotal) break;
+  }
+
+  return {
+    claims,
+    reportedTotal: reportedTotal == null ? claims.length : reportedTotal,
+    truncated: reportedTotal != null && claims.length < reportedTotal
+  };
+}
+
+async function resolveClaimOrderId(claim, account) {
+  if (claim?.order_id != null) return String(claim.order_id);
+  const resource = String(claim?.resource || "").toLowerCase();
+  const resourceId = claim?.resource_id;
+
+  if (resource === "order" && resourceId != null) return String(resourceId);
+
+  if (resource === "shipment" && resourceId != null) {
+    const { response } = await mercadoLivreFetch(
+      `/shipments/${encodeURIComponent(String(resourceId))}`,
+      account
+    );
+    const data = await readJson(response);
+    if (!response.ok) return null;
+    return data?.order_id != null
+      ? String(data.order_id)
+      : data?.order?.id != null
+        ? String(data.order.id)
+        : null;
+  }
+
+  if (resource === "payment" && resourceId != null) {
+    const { response } = await mercadoLivreFetch(
+      `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(resourceId))}`,
+      account
+    );
+    const data = await readJson(response);
+    if (!response.ok) return null;
+    if (data?.order?.id != null) return String(data.order.id);
+    if (data?.external_reference && /^\d{10,}$/.test(String(data.external_reference))) {
+      return String(data.external_reference);
+    }
+  }
+
   return null;
 }
 
-async function getMercadoPagoAccount() {
-  const { data, error } = await supabase
-    .from("marketplace_accounts")
-    .select("id,marketplace,account_id,user_id,access_token,refresh_token,expires_at")
-    .eq("marketplace", "mercadopago")
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(`Conta Mercado Pago: ${error.message}`);
+async function fetchReturnForClaim(claim, account) {
+  const claimId = claim?.id ?? claim?.claim_id;
+  if (claimId == null) return null;
+
+  const related = Array.isArray(claim?.related_entities)
+    ? claim.related_entities.map(value => String(value).toLowerCase())
+    : [];
+  const type = String(claim?.type || "").toLowerCase();
+  if (!related.includes("return") && type !== "return" && type !== "change") return null;
+
+  const { response } = await mercadoLivreFetch(
+    `/post-purchase/v2/claims/${encodeURIComponent(String(claimId))}/returns`,
+    account
+  );
+  const data = await readJson(response);
+  if (!response.ok) return null;
   return data;
 }
 
-async function saveMercadoPagoAccount(tokenData) {
-  const userId = String(tokenData.user_id || tokenData.account_id || "").trim();
-  if (!userId) throw new Error("Mercado Pago não retornou user_id.");
-  const expiresIn = Number(tokenData.expires_in || 15552000);
-  const record = {
-    marketplace: "mercadopago",
-    account_id: userId,
-    user_id: userId,
-    access_token: tokenData.access_token,
-    refresh_token: tokenData.refresh_token || null,
-    expires_at: new Date(Date.now() + expiresIn * 1000).toISOString()
-  };
+async function fetchBillingOrderDetails(account, orderIds) {
+  const rows = [];
+  const ids = [...new Set(orderIds.filter(Boolean).map(String))];
 
-  const existing = await getMercadoPagoAccount();
-  if (existing?.id) {
-    const { error } = await supabase
-      .from("marketplace_accounts")
-      .update(record)
-      .eq("id", existing.id);
-    if (error) throw new Error(`Salvando token Mercado Pago: ${error.message}`);
-    return { id: existing.id, ...record };
-  }
-
-  const { data, error } = await supabase
-    .from("marketplace_accounts")
-    .insert(record)
-    .select("id")
-    .single();
-  if (error) throw new Error(`Criando conta Mercado Pago: ${error.message}`);
-  return { id: data.id, ...record };
-}
-
-async function refreshMercadoPagoToken(account) {
-  if (!account?.refresh_token) throw new Error("Refresh token Mercado Pago ausente.");
-  const response = await fetch("https://api.mercadopago.com/oauth/token", {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: "refresh_token",
-      refresh_token: account.refresh_token
-    })
-  });
-  const data = await readJson(response);
-  if (!response.ok) throw new Error(`Mercado Pago recusou renovação do token (${response.status}).`);
-  return saveMercadoPagoAccount({ ...data, user_id: data.user_id || account.user_id });
-}
-
-async function ensureMercadoPagoToken(account) {
-  if (!account) return null;
-  const expiresAt = new Date(account.expires_at || 0).getTime();
-  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() + 5 * 60 * 1000) {
-    return refreshMercadoPagoToken(account);
-  }
-  return account;
-}
-
-async function mercadoPagoFetch(path, account, options = {}) {
-  let current = await ensureMercadoPagoToken(account);
-  if (!current) throw new Error("Mercado Pago ainda não autorizado.");
-  const url = path.startsWith("http") ? path : `https://api.mercadopago.com${path}`;
-  let response = await fetch(url, {
-    ...options,
-    headers: {
-      accept: "application/json",
-      ...(options.headers || {}),
-      Authorization: `Bearer ${current.access_token}`
-    }
-  });
-  if (response.status === 401 && current.refresh_token) {
-    current = await refreshMercadoPagoToken(current);
-    response = await fetch(url, {
-      ...options,
-      headers: {
-        accept: "application/json",
-        ...(options.headers || {}),
-        Authorization: `Bearer ${current.access_token}`
-      }
-    });
-  }
-  return { response, account: current };
-}
-
-router.get("/auth/mercadopago", (req, res) => {
-  if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
-    return res.status(500).send("Credenciais OAuth não configuradas.");
-  }
-
-  const state = `mp_${crypto.randomBytes(24).toString("hex")}`;
-  const codeVerifier = base64url(crypto.randomBytes(64));
-  const codeChallenge = base64url(
-    crypto.createHash("sha256").update(codeVerifier).digest()
-  );
-
-  oauthSessions.set(state, { codeVerifier, createdAt: Date.now() });
-  for (const [key, session] of oauthSessions.entries()) {
-    if (Date.now() - session.createdAt > 15 * 60 * 1000) oauthSessions.delete(key);
-  }
-
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    response_type: "code",
-    platform_id: "mp",
-    state,
-    redirect_uri: REDIRECT_URI,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256"
-  });
-
-  res.redirect(`https://auth.mercadopago.com/authorization?${params.toString()}`);
-});
-
-async function handleMercadoPagoCallback(req, res) {
-  const { code, state, error } = req.query;
-  if (error) {
-    return res.redirect(`/finance?mercadopago=error&reason=${encodeURIComponent(String(error))}`);
-  }
-  if (!code || !state) {
-    return res.redirect("/finance?mercadopago=error&reason=missing_code");
-  }
-
-  const session = oauthSessions.get(String(state));
-  if (!session) {
-    return res.redirect("/finance?mercadopago=error&reason=expired_state");
-  }
-  oauthSessions.delete(String(state));
-
-  try {
-    const response = await fetch("https://api.mercadopago.com/oauth/token", {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json" },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        code,
-        grant_type: "authorization_code",
-        redirect_uri: REDIRECT_URI,
-        code_verifier: session.codeVerifier,
-        test_token: false
-      })
-    });
+  for (let i = 0; i < ids.length; i += BILLING_BATCH) {
+    const chunk = ids.slice(i, i + BILLING_BATCH);
+    const params = new URLSearchParams({ order_ids: chunk.join(",") });
+    const { response } = await mercadoLivreFetch(
+      `/billing/integration/group/ML/order/details?${params.toString()}`,
+      account
+    );
     const data = await readJson(response);
     if (!response.ok) {
-      console.error("[Mercado Pago OAuth] troca recusada:", response.status, data);
-      return res.redirect(`/finance?mercadopago=error&reason=${encodeURIComponent(`token_${response.status}`)}`);
+      throw new Error(`Financeiro por vendas ML HTTP ${response.status}`);
     }
-    await saveMercadoPagoAccount(data);
-    lastSyncAt = 0;
-    lastResult = null;
-    return res.redirect("/finance?mercadopago=connected");
-  } catch (callbackError) {
-    console.error("[Mercado Pago OAuth] callback:", callbackError.message);
-    return res.redirect(`/finance?mercadopago=error&reason=${encodeURIComponent(callbackError.message)}`);
+    const page = Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data)
+        ? data
+        : [];
+    rows.push(...page);
   }
+
+  return rows;
 }
 
-// Reaproveita exatamente a redirect URI já cadastrada para o OAuth do ML.
-// Como esta rota é montada antes da rota original do Mercado Livre, ela só
-// captura estados iniciados por mp_; os demais seguem normalmente via next().
-router.get("/auth/mercadolivre/callback", async (req, res, next) => {
-  if (!String(req.query?.state || "").startsWith("mp_")) return next();
-  return handleMercadoPagoCallback(req, res);
-});
-router.get("/auth/mercadopago/callback", handleMercadoPagoCallback);
+function normalizePaymentInfo(row) {
+  if (Array.isArray(row?.payment_info)) return row.payment_info;
+  if (row?.payment_info && typeof row.payment_info === "object") return [row.payment_info];
+  return [];
+}
 
-async function fetchBalance(account) {
-  const sellerId = String(account.user_id || account.account_id || "").trim();
-  if (!sellerId) throw new Error("Conta Mercado Pago sem user_id.");
-  const { response } = await mercadoPagoFetch(
-    `/users/${encodeURIComponent(sellerId)}/mercadopago_account/balance`,
+function isPaymentUnreleased(payment) {
+  const status = String(payment?.status || payment?.payment_status || "").toLowerCase();
+  if (status && status !== "approved") return false;
+
+  const releaseStatus = String(payment?.money_release_status || "").toLowerCase();
+  if (["released", "available"].includes(releaseStatus)) return false;
+  if (releaseStatus) return true;
+
+  const releaseDate = new Date(payment?.money_release_date || 0).getTime();
+  return Number.isFinite(releaseDate) && releaseDate > Date.now();
+}
+
+async function fetchPaymentDetail(account, paymentId) {
+  const { response } = await mercadoLivreFetch(
+    `https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId))}`,
     account
   );
   const data = await readJson(response);
   if (!response.ok) {
-    const error = new Error(`Saldo Mercado Pago HTTP ${response.status}`);
-    error.details = data;
+    const error = new Error(`Pagamento ${paymentId} HTTP ${response.status}`);
+    error.httpStatus = response.status;
     throw error;
   }
-  return data;
-}
 
-function reasonRows(balance) {
-  const raw = balance?.unavailable_balance_by_reason;
-  if (Array.isArray(raw)) return raw;
-  if (raw && typeof raw === "object") {
-    return Object.entries(raw).map(([reason, value]) => {
-      if (value && typeof value === "object") return { reason, ...value };
-      return { reason, amount: value };
-    });
-  }
-  return [];
-}
-
-function splitUnavailableBalance(balance) {
-  const unavailable = money(Math.max(0, num(balance?.unavailable_balance)));
-  const rows = reasonRows(balance);
-  let held = 0;
-  const matched = [];
-
-  for (const row of rows) {
-    const text = [
-      row?.reason,
-      row?.type,
-      row?.cause,
-      row?.detail,
-      row?.description,
-      row?.status_detail
-    ].filter(Boolean).join(" ").toLowerCase();
-
-    if (!/(claim|disput|chargeback|mediat|reclama|contest)/i.test(text)) continue;
-    const amount = amountFrom(row);
-    if (amount == null) continue;
-    held += amount;
-    matched.push({ reason: text.slice(0, 160), amount: money(amount) });
+  const exactNet = Number(data?.transaction_details?.net_received_amount);
+  if (Number.isFinite(exactNet)) {
+    return {
+      id: String(paymentId),
+      net: money(Math.max(0, exactNet)),
+      source: "transaction_details.net_received_amount",
+      status: data?.status || null,
+      status_detail: data?.status_detail || null,
+      money_release_date: data?.money_release_date || null
+    };
   }
 
-  held = money(Math.min(unavailable, held));
-  const receivable = money(Math.max(0, unavailable - held));
+  const gross = Number(data?.transaction_amount);
+  if (!Number.isFinite(gross)) {
+    throw new Error(`Pagamento ${paymentId} sem valor líquido disponível.`);
+  }
+
+  const refunded = Math.max(0, num(data?.transaction_amount_refunded));
+  const collectorFees = (Array.isArray(data?.fee_details) ? data.fee_details : [])
+    .filter(fee => !fee?.fee_payer || String(fee.fee_payer).toLowerCase() === "collector")
+    .reduce((sum, fee) => sum + Math.abs(num(fee?.amount)), 0);
+
   return {
-    unavailable,
-    held,
-    receivable,
-    breakdown_available: rows.length > 0,
-    matched_reasons: matched,
-    all_reason_count: rows.length
+    id: String(paymentId),
+    net: money(Math.max(0, gross - refunded - collectorFees)),
+    source: "transaction_amount-fees-refunds",
+    status: data?.status || null,
+    status_detail: data?.status_detail || null,
+    money_release_date: data?.money_release_date || null
+  };
+}
+
+function setMaxFraction(map, orderId, fraction) {
+  if (!orderId) return;
+  const value = Math.max(0, Math.min(1, num(fraction)));
+  const current = map.get(String(orderId)) || 0;
+  if (value > current) map.set(String(orderId), value);
+}
+
+async function buildRetainedFractions(account, claims, orderMap) {
+  const fractions = new Map();
+  const returnStatuses = [];
+
+  const resolved = await mapLimit(claims, 6, async claim => {
+    const orderId = await resolveClaimOrderId(claim, account);
+    return { claim, orderId };
+  });
+
+  const claimOrderIds = resolved
+    .filter(row => row && !row.__error && row.orderId)
+    .map(row => String(row.orderId));
+
+  const missingIds = claimOrderIds.filter(id => !orderMap.has(id));
+  if (missingIds.length) {
+    const extra = await loadOrdersByIds(missingIds);
+    for (const [id, row] of extra) orderMap.set(id, row);
+  }
+
+  for (const row of resolved) {
+    if (!row || row.__error || !row.orderId) continue;
+    const order = orderMap.get(String(row.orderId));
+    const totalQty = orderTotalQuantity(order);
+    const claimedQty = Math.max(0, num(row.claim?.claimed_quantity));
+    setMaxFraction(
+      fractions,
+      row.orderId,
+      claimedQty > 0 ? claimedQty / totalQty : 1
+    );
+  }
+
+  const returns = await mapLimit(claims, 6, claim => fetchReturnForClaim(claim, account));
+  for (const ret of returns) {
+    if (!ret || ret.__error) continue;
+    const statusMoney = String(ret?.status_money || "").toLowerCase();
+    if (statusMoney) returnStatuses.push(statusMoney);
+    if (statusMoney !== "retained") continue;
+
+    const orders = Array.isArray(ret?.orders) ? ret.orders : [];
+    for (const item of orders) {
+      const orderId = item?.order_id;
+      if (orderId == null) continue;
+      const context = String(item?.context_type || "").toLowerCase();
+      let fraction = 1;
+      if (context !== "total") {
+        const totalQty = Math.max(0, num(item?.total_quantity));
+        const returnQty = Math.max(0, num(item?.return_quantity));
+        if (totalQty > 0 && returnQty > 0) fraction = returnQty / totalQty;
+      }
+      setMaxFraction(fractions, String(orderId), fraction);
+    }
+  }
+
+  return {
+    fractions,
+    claim_order_ids: claimOrderIds,
+    return_statuses: [...new Set(returnStatuses)].sort()
   };
 }
 
@@ -312,69 +383,187 @@ async function saveAccount(matrixKey, name, category, balance, metadata) {
     return existing.id;
   }
 
-  const { data, error } = await supabase.from("financial_accounts").insert(record).select("id").single();
+  const { data, error } = await supabase
+    .from("financial_accounts")
+    .insert(record)
+    .select("id")
+    .single();
   if (error) throw new Error(`Criando ${name}: ${error.message}`);
   return data.id;
 }
 
 async function performSync() {
-  const mpAccount = await getMercadoPagoAccount();
-  if (!mpAccount) {
-    const error = new Error("Autorize o Mercado Pago para consultar os valores financeiros com precisão.");
-    error.code = "MP_AUTH_REQUIRED";
+  const account = await getMercadoLivreAccount();
+  if (!account) {
+    const error = new Error("Conta Mercado Livre não conectada.");
+    error.code = "ML_AUTH_REQUIRED";
     throw error;
   }
 
-  const balance = await fetchBalance(mpAccount);
-  const split = splitUnavailableBalance(balance);
-  const available = money(Math.max(0, num(balance?.available_balance)));
-  const total = money(Math.max(0, num(balance?.total_amount)));
-  const pendingReview = money(Math.max(0, num(balance?.pending_to_review)));
+  const [recentOrders, claimsLive] = await Promise.all([
+    loadRecentPaidOrders(),
+    fetchOpenClaims(account)
+  ]);
+
+  const orderMap = new Map(
+    recentOrders.map(row => [String(row.marketplace_order_id), row])
+  );
+
+  const retainedInfo = await buildRetainedFractions(
+    account,
+    claimsLive.claims,
+    orderMap
+  );
+
+  const candidateOrderIds = [...new Set([
+    ...recentOrders.map(row => String(row.marketplace_order_id)),
+    ...retainedInfo.claim_order_ids
+  ])];
+
+  const billingRows = await fetchBillingOrderDetails(account, candidateOrderIds);
+  const paymentMap = new Map();
+  const releaseStatuses = new Set();
+
+  for (const row of billingRows) {
+    const orderId = String(row?.order_id ?? row?.id ?? "").trim();
+    if (!orderId) continue;
+
+    for (const payment of normalizePaymentInfo(row)) {
+      const paymentId = payment?.payment_id ?? payment?.id;
+      if (paymentId == null) continue;
+      const releaseStatus = String(payment?.money_release_status || "").toLowerCase();
+      if (releaseStatus) releaseStatuses.add(releaseStatus);
+      if (!isPaymentUnreleased(payment)) continue;
+
+      const key = String(paymentId);
+      if (!paymentMap.has(key)) {
+        paymentMap.set(key, {
+          payment_id: key,
+          orders: new Map()
+        });
+      }
+      paymentMap.get(key).orders.set(orderId, {
+        order_id: orderId,
+        money_release_status: payment?.money_release_status || null,
+        money_release_date: payment?.money_release_date || null
+      });
+    }
+  }
+
+  const paymentIds = [...paymentMap.keys()];
+  const paymentResults = await mapLimit(
+    paymentIds,
+    8,
+    paymentId => fetchPaymentDetail(account, paymentId)
+  );
+
+  const paymentDetails = new Map();
+  const paymentErrors = [];
+  let derivedNetCount = 0;
+
+  for (let i = 0; i < paymentIds.length; i++) {
+    const result = paymentResults[i];
+    if (!result || result.__error) {
+      paymentErrors.push({
+        payment_id: paymentIds[i],
+        error: result?.__error?.message || "falha desconhecida"
+      });
+      continue;
+    }
+    if (result.source !== "transaction_details.net_received_amount") derivedNetCount += 1;
+    paymentDetails.set(paymentIds[i], result);
+  }
+
+  if (paymentErrors.length) {
+    const preview = paymentErrors.slice(0, 3).map(item => `${item.payment_id}: ${item.error}`).join("; ");
+    throw new Error(`Não foi possível validar ${paymentErrors.length} pagamento(s) pendente(s) com precisão. ${preview}`);
+  }
+
+  let pendingTotal = 0;
+  let heldTotal = 0;
+  let allocatedOrders = 0;
+
+  for (const [paymentId, paymentGroup] of paymentMap) {
+    const detail = paymentDetails.get(paymentId);
+    if (!detail) continue;
+
+    const entries = [...paymentGroup.orders.values()];
+    const weights = entries.map(entry => {
+      const order = orderMap.get(String(entry.order_id));
+      const gross = Math.max(0, num(order?.paid_amount ?? order?.total_amount));
+      return { ...entry, gross };
+    });
+
+    let weightTotal = weights.reduce((sum, row) => sum + row.gross, 0);
+    if (weightTotal <= 0) {
+      weightTotal = weights.length || 1;
+      for (const row of weights) row.gross = 1;
+    }
+
+    for (const row of weights) {
+      const share = detail.net * (row.gross / weightTotal);
+      const retainedFraction = retainedInfo.fractions.get(String(row.order_id)) || 0;
+      pendingTotal += share;
+      heldTotal += share * retainedFraction;
+      allocatedOrders += 1;
+    }
+  }
+
+  pendingTotal = money(Math.max(0, pendingTotal));
+  heldTotal = money(Math.max(0, Math.min(pendingTotal, heldTotal)));
+  const receivable = money(Math.max(0, pendingTotal - heldTotal));
   const syncedAt = new Date().toISOString();
+
   const common = {
-    seller_id: String(mpAccount.user_id || mpAccount.account_id || ""),
+    seller_id: String(account.user_id || account.account_id || ""),
     synced_at: syncedAt,
-    source_precision: "mercadopago_balance_api",
-    ml_total_amount: total,
-    ml_available_balance: available,
-    ml_unavailable_balance: split.unavailable,
-    pending_to_review: pendingReview,
-    breakdown_available: split.breakdown_available,
-    balance_keys: Object.keys(balance || {}).sort()
+    source_precision: derivedNetCount === 0
+      ? "mercadolivre_billing+payment_net+claims_returns"
+      : "mercadolivre_billing+payment_net_derived+claims_returns",
+    lookback_days: LOOKBACK_DAYS,
+    recent_paid_orders: recentOrders.length,
+    billing_orders_loaded: billingRows.length,
+    unreleased_payments: paymentIds.length,
+    allocated_order_payment_rows: allocatedOrders,
+    exact_net_payments: paymentIds.length - derivedNetCount,
+    derived_net_payments: derivedNetCount,
+    open_claims: claimsLive.reportedTotal,
+    claims_loaded: claimsLive.claims.length,
+    claims_truncated: claimsLive.truncated,
+    release_statuses_seen: [...releaseStatuses].sort(),
+    return_money_statuses_seen: retainedInfo.return_statuses
   };
 
   await saveAccount(
     "ml_receivable",
     "Mercado Livre — A receber",
     "Mercado Livre a receber",
-    split.receivable,
+    receivable,
     { ...common, component: "receivable" }
   );
+
   await saveAccount(
     "ml_claims_held",
     "Mercado Livre — Retido em reclamações",
-    "Valores retidos",
-    split.held,
-    {
-      ...common,
-      component: "claims_held",
-      matched_reasons: split.matched_reasons,
-      reason_count: split.all_reason_count
-    }
+    "Mercado Livre retido em reclamações",
+    heldTotal,
+    { ...common, component: "claims_held" }
   );
 
   lastSyncAt = Date.now();
   lastResult = {
-    a_receber: split.receivable,
-    retido_reclamacoes: split.held,
-    indisponivel_total: split.unavailable,
-    saldo_disponivel: available,
-    saldo_total_mp: total,
-    pending_to_review: pendingReview,
-    fonte: "mercadopago_balance_api",
-    breakdown_available: split.breakdown_available,
+    a_receber: receivable,
+    retido_reclamacoes: heldTotal,
+    indisponivel_total: pendingTotal,
+    fonte: common.source_precision,
+    pedidos_analisados: candidateOrderIds.length,
+    pagamentos_nao_liberados: paymentIds.length,
+    reclamacoes_abertas: claimsLive.reportedTotal,
+    release_statuses: common.release_statuses_seen,
+    return_money_statuses: common.return_money_statuses_seen,
     atualizado_em: syncedAt
   };
+
   return lastResult;
 }
 
@@ -391,10 +580,10 @@ router.post("/api/finance/mercadolivre/sync", async (req, res) => {
     res.json({ sucesso: true, ...result });
   } catch (error) {
     console.error("[Financeiro ML] sincronização:", error.message);
-    const status = error.code === "MP_AUTH_REQUIRED" ? 428 : 502;
+    const status = error.code === "ML_AUTH_REQUIRED" ? 428 : 502;
     res.status(status).json({
       sucesso: false,
-      authorization_required: error.code === "MP_AUTH_REQUIRED",
+      authorization_required: error.code === "ML_AUTH_REQUIRED",
       mensagem: error.message
     });
   }
@@ -402,17 +591,18 @@ router.post("/api/finance/mercadolivre/sync", async (req, res) => {
 
 router.get("/api/finance/mercadolivre/status", async (req, res) => {
   try {
-    const mpAccount = await getMercadoPagoAccount();
+    const account = await getMercadoLivreAccount();
     const { data, error } = await supabase
       .from("financial_accounts")
       .select("id,name,current_balance,metadata,updated_at")
       .eq("source", "mercadolivre")
       .eq("active", true);
     if (error) throw new Error(error.message);
+
     res.json({
       sucesso: true,
-      mercadopago_connected: Boolean(mpAccount),
-      mercadopago_user_id: mpAccount?.user_id || null,
+      mercadolivre_connected: Boolean(account),
+      mercadolivre_user_id: account?.user_id || null,
       contas: data || [],
       ultima_sincronizacao: lastResult
     });
@@ -496,10 +686,9 @@ router.post("/api/finance/liabilities/:id/pay", async (req, res) => {
   }
 });
 
-// Após a autorização, mantém os valores atualizados sem precisar abrir a tela.
 const startupTimer = setTimeout(async () => {
   try {
-    if (await getMercadoPagoAccount()) await syncMercadoLivreFunds(false);
+    if (await getMercadoLivreAccount()) await syncMercadoLivreFunds(false);
   } catch (error) {
     console.warn("[Financeiro ML] sync inicial:", error.message);
   }
@@ -508,7 +697,7 @@ startupTimer.unref?.();
 
 const interval = setInterval(async () => {
   try {
-    if (await getMercadoPagoAccount()) await syncMercadoLivreFunds(false);
+    if (await getMercadoLivreAccount()) await syncMercadoLivreFunds(false);
   } catch (error) {
     console.warn("[Financeiro ML] sync periódico:", error.message);
   }
