@@ -6,6 +6,14 @@
 
   function $(id){ return document.getElementById(id); }
   function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+  function esc(value){
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[char]));
+  }
+  function brl(value){
+    return Number(value || 0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
+  }
 
   async function api(path, options = {}) {
     const response = await fetch(path, {
@@ -41,6 +49,90 @@
     return sdkPromise;
   }
 
+  function ensureBankAccountsPanel(){
+    let panel = $('pluggyBankAccountsPanel');
+    if (panel) return panel;
+
+    const sources = document.querySelector('.sources');
+    if (!sources) return null;
+
+    if (!$('pluggyBankAccountsStyles')) {
+      const style = document.createElement('style');
+      style.id = 'pluggyBankAccountsStyles';
+      style.textContent = `
+        .pluggy-bank-panel{margin:0 0 14px;border:1px solid #263f62;background:rgba(10,23,41,.96);border-radius:15px;padding:15px}
+        .pluggy-bank-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+        .pluggy-bank-head h2{font-size:16px;margin:0}.pluggy-bank-head small{color:#8fa4c3}
+        .pluggy-bank-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+        .pluggy-bank-card{border:1px solid #263f62;background:#0b182a;border-radius:13px;padding:13px;min-height:104px}
+        .pluggy-bank-name{display:flex;align-items:center;gap:7px;color:#c8d8ed;font-weight:800;font-size:13px}
+        .pluggy-bank-dot{width:8px;height:8px;border-radius:50%;background:#31dc98;flex:0 0 auto}
+        .pluggy-bank-balance{display:block;font-size:22px;margin:9px 0 3px;color:#f3f7ff}
+        .pluggy-bank-detail{color:#8fa4c3;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        @media(max-width:680px){.pluggy-bank-grid{grid-template-columns:1fr}}
+      `;
+      document.head.appendChild(style);
+    }
+
+    panel = document.createElement('section');
+    panel.id = 'pluggyBankAccountsPanel';
+    panel.className = 'pluggy-bank-panel';
+    panel.hidden = true;
+    panel.innerHTML = '<div class="pluggy-bank-head"><h2>Saldos por conta bancária</h2><small id="pluggyBankAccountsCount"></small></div><div id="pluggyBankAccountsGrid" class="pluggy-bank-grid"></div>';
+    sources.insertAdjacentElement('afterend', panel);
+    return panel;
+  }
+
+  function institutionFor(account){
+    const metadata = account?.metadata || {};
+    const itemId = metadata.pluggy_item_id ? String(metadata.pluggy_item_id) : '';
+    const connection = (state?.connections || []).find(row => String(row.external_connection_id || '') === itemId);
+    return metadata.institution || connection?.institution_name || account?.name || 'Banco';
+  }
+
+  async function renderBankAccounts(){
+    const panel = ensureBankAccountsPanel();
+    if (!panel) return;
+
+    try {
+      const summary = await api('/api/finance/summary');
+      const accounts = (summary.accounts || [])
+        .filter(account => String(account.source || '').toLowerCase() === 'pluggy')
+        .filter(account => account.account_type === 'asset')
+        .filter(account => /banco|bank|caixa|cash/i.test(String(account.category || '')))
+        .sort((a, b) => institutionFor(a).localeCompare(institutionFor(b), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
+
+      const grid = $('pluggyBankAccountsGrid');
+      const count = $('pluggyBankAccountsCount');
+      if (!grid || !count) return;
+
+      if (!accounts.length) {
+        panel.hidden = true;
+        grid.innerHTML = '';
+        count.textContent = '';
+        return;
+      }
+
+      count.textContent = accounts.length === 1 ? '1 conta conectada' : `${accounts.length} contas conectadas`;
+      grid.innerHTML = accounts.map(account => {
+        const bank = institutionFor(account);
+        const metadata = account.metadata || {};
+        const details = [];
+        if (account.name && String(account.name).trim().toLowerCase() !== String(bank).trim().toLowerCase()) details.push(account.name);
+        if (metadata.masked_number) details.push(`Conta ${metadata.masked_number}`);
+        if (!details.length) details.push('Conta bancária via Open Finance');
+        return `<div class="pluggy-bank-card">
+          <div class="pluggy-bank-name"><span class="pluggy-bank-dot"></span>${esc(bank)}</div>
+          <strong class="pluggy-bank-balance">${brl(account.current_balance)}</strong>
+          <div class="pluggy-bank-detail" title="${esc(details.join(' · '))}">${esc(details.join(' · '))}</div>
+        </div>`;
+      }).join('');
+      panel.hidden = false;
+    } catch (error) {
+      console.warn('[Open Finance] saldos por banco:', error.message);
+    }
+  }
+
   function renderCard(){
     const btn = $('bankBtn');
     if (!btn || !state) return;
@@ -61,6 +153,7 @@
     try {
       state = await api('/api/finance/open-finance/status');
       renderCard();
+      await renderBankAccounts();
     } catch (error) {
       console.warn('[Open Finance] status:', error.message);
     }
