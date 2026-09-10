@@ -97,9 +97,8 @@ router.post("/api/ml/xml-upload/send", async (req, res) => {
     if (!account) return res.status(404).json({ sucesso: false, mensagem: "Conta Mercado Livre não conectada." });
     const context = await loadOrderContext(orderId, account);
 
-    if (String(context.order_status || "").toLowerCase() === "cancelled" || Number(context.paid_amount) === 0) {
-      return res.status(409).json({ sucesso: false, mensagem: "A venda está cancelada. O XML não será enviado." });
-    }
+    const cancelled = String(context.order_status || "").toLowerCase() === "cancelled" || (context.paid_amount != null && Number(context.paid_amount) === 0);
+    if (cancelled) return res.status(409).json({ sucesso: false, mensagem: "A venda está cancelada. O XML não será enviado." });
 
     let path;
     let method;
