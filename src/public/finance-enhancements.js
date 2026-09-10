@@ -1,6 +1,7 @@
 (()=>{
   let syncingMl = false;
   let lastMlSync = 0;
+  let mpConnected = false;
 
   const $ = id => document.getElementById(id);
   const brl = value => Number(value || 0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
@@ -17,7 +18,12 @@
       }
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.sucesso === false) throw new Error(data.mensagem || `Falha HTTP ${response.status}`);
+    if (!response.ok || data.sucesso === false) {
+      const error = new Error(data.mensagem || `Falha HTTP ${response.status}`);
+      error.status = response.status;
+      error.data = data;
+      throw error;
+    }
     return data;
   }
 
@@ -36,6 +42,7 @@
       .mini-btn{border:1px solid #315078;background:#13243e;color:#fff;border-radius:8px;padding:6px 8px;font-size:11px;font-weight:800;cursor:pointer}
       .mini-btn.good{background:#17684d;border-color:#2aa879}
       .mini-btn.warn{background:#5b4218;border-color:#9b762c}
+      .mini-btn.auth{margin-top:7px;background:#1d65cb;border-color:#4690ff;width:100%}
       .mini-btn:disabled{opacity:.45;cursor:not-allowed}
       .paid-badge{display:inline-flex;padding:4px 7px;border-radius:999px;background:#103126;border:1px solid #236d51;color:#8bf0c4;font-size:11px;font-weight:800}
       .ml-sync-note{color:#8fa4c3;font-size:11px;margin-top:4px}
@@ -59,7 +66,7 @@
       const div = document.createElement('div');
       div.className = 'source ml-held';
       div.id = 'srcMlHeldCard';
-      div.innerHTML = '<span class="dot"></span><small>Mercado Livre — Retido</small><strong id="srcMlHeld">R$ 0,00</strong><small>Reclamações / disputas</small><div id="mlHeldSyncNote" class="ml-sync-note"></div>';
+      div.innerHTML = '<span class="dot"></span><small>Mercado Livre — Retido</small><strong id="srcMlHeld">R$ 0,00</strong><small>Reclamações / disputas</small><div id="mlHeldSyncNote" class="ml-sync-note"></div><button id="mpAuthorizeBtn" class="mini-btn auth" type="button" hidden>Autorizar Mercado Pago</button>';
       card.insertAdjacentElement('afterend', div);
       held = $('srcMlHeld');
     }
@@ -120,10 +127,10 @@
     if ($('srcMlHeld')) $('srcMlHeld').textContent = brl(held?.current_balance || 0);
 
     const syncedAt = held?.metadata?.synced_at || receivable?.metadata?.synced_at;
-    if ($('mlHeldSyncNote')) {
+    if ($('mlHeldSyncNote') && mpConnected) {
       $('mlHeldSyncNote').textContent = syncedAt
-        ? `Atualizado ${new Date(syncedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`
-        : '';
+        ? `Fonte: Mercado Pago · ${new Date(syncedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`
+        : 'Mercado Pago autorizado';
     }
 
     const t = summary?.totals || {};
@@ -150,8 +157,27 @@
     }
   }
 
+  function updateMpAuthUi(){
+    const button = $('mpAuthorizeBtn');
+    const note = $('mlHeldSyncNote');
+    if (button) button.hidden = mpConnected;
+    if (!mpConnected && note) note.textContent = 'Autorize o Mercado Pago para valores exatos';
+  }
+
+  async function refreshMpStatus(){
+    try {
+      const status = await api('/api/finance/mercadolivre/status');
+      mpConnected = Boolean(status.mercadopago_connected);
+      updateMpAuthUi();
+      return status;
+    } catch (error) {
+      console.warn('[Financeiro ML] status:', error.message);
+      return null;
+    }
+  }
+
   async function syncMl(force = false){
-    if (syncingMl) return;
+    if (syncingMl || !mpConnected) return;
     if (!force && Date.now() - lastMlSync < 20000) return;
     syncingMl = true;
     try {
@@ -159,9 +185,13 @@
       lastMlSync = Date.now();
       await refreshSummary();
     } catch (error) {
+      if (error.data?.authorization_required) {
+        mpConnected = false;
+        updateMpAuthUi();
+      }
       console.warn('[Financeiro ML] sincronização:', error.message);
       const note = $('mlHeldSyncNote');
-      if (note) note.textContent = 'Falha ao sincronizar agora';
+      if (note && mpConnected) note.textContent = 'Falha ao sincronizar agora';
     } finally {
       syncingMl = false;
     }
@@ -201,10 +231,33 @@
     }
   }
 
+  function handleOauthReturn(){
+    const params = new URLSearchParams(location.search);
+    const status = params.get('mercadopago');
+    if (!status) return;
+    if (status === 'connected') {
+      history.replaceState({}, '', location.pathname);
+      setTimeout(async()=>{
+        await refreshMpStatus();
+        await syncMl(true);
+      },300);
+    } else if (status === 'error') {
+      const reason = params.get('reason') || 'autorização recusada';
+      history.replaceState({}, '', location.pathname);
+      alert('Mercado Pago: não foi possível concluir a autorização. ' + reason);
+    }
+  }
+
   function bind(){
     ensureStyle();
     ensureMlHeldCard();
     ensureLiabilityManager();
+
+    const auth = $('mpAuthorizeBtn');
+    if (auth && !auth.dataset.bound) {
+      auth.dataset.bound = '1';
+      auth.addEventListener('click', () => { location.href = '/auth/mercadopago'; });
+    }
 
     const refresh = $('refreshBtn');
     if (refresh && !refresh.dataset.mlFundsBound) {
@@ -212,9 +265,11 @@
       refresh.addEventListener('click', () => syncMl(false), true);
     }
 
-    setTimeout(() => {
-      refreshSummary();
-      syncMl(false);
+    handleOauthReturn();
+    setTimeout(async () => {
+      await refreshSummary();
+      await refreshMpStatus();
+      await syncMl(false);
     }, 500);
   }
 
