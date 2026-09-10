@@ -85,6 +85,16 @@ function sendMatrixPage(fileName) {
         );
       }
 
+      if (
+        fileName === "stock.html" &&
+        !html.includes("stock-bom-substitutions.js")
+      ) {
+        html = html.replace(
+          "</head>",
+          `\n<script defer src="/stock-bom-substitutions.js?v=1"></script>\n</head>`
+        );
+      }
+
       res.set({
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
         Pragma: "no-cache",
