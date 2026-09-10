@@ -75,6 +75,16 @@ function sendMatrixPage(fileName) {
         );
       }
 
+      if (
+        fileName === "finance.html" &&
+        !html.includes("finance-pluggy.js")
+      ) {
+        html = html.replace(
+          "</head>",
+          `\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
+        );
+      }
+
       res.set({
         "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
         Pragma: "no-cache",
@@ -145,6 +155,7 @@ app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/ml-xml-upload"));
 app.use(require("./src/routes/finance"));
+app.use(require("./src/routes/finance-open-finance"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
 
