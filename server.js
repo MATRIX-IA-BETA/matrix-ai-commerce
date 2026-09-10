@@ -81,7 +81,7 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/finance-enhancements.js?v=1"></script>\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
+          `\n<script defer src="/finance-enhancements.js?v=2"></script>\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
         );
       }
 
@@ -163,6 +163,9 @@ app.use(express.static(PUBLIC_DIR, { index: false }));
 
 app.use(require("./src/routes/basic"));
 app.use(require("./src/routes/webhooks-mercadolivre"));
+// O callback financeiro do Mercado Pago reaproveita a redirect URI do ML e
+// precisa ter a primeira chance de capturar apenas os states prefixados mp_.
+app.use(require("./src/routes/finance-ml-funds"));
 app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-sac-history-links"));
@@ -173,7 +176,6 @@ app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/ml-xml-upload"));
 app.use(require("./src/routes/finance"));
-app.use(require("./src/routes/finance-ml-funds"));
 app.use(require("./src/routes/finance-open-finance"));
 app.use(require("./src/routes/stock-dashboard"));
 app.use(require("./src/routes/stock"));
