@@ -40,7 +40,7 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=5"></script>\n`;
+const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=6"></script>\n`;
 
 function sendMatrixPage(fileName) {
   return (req, res, next) => {
@@ -112,6 +112,10 @@ app.get("/sac/perguntas", sendMatrixPage("mercadolivre-perguntas.html"));
 app.get("/sac/perguntas-ml", sendMatrixPage("mercadolivre-perguntas.html"));
 app.get("/mercadolivre-perguntas.html", sendMatrixPage("mercadolivre-perguntas.html"));
 
+// Financeiro e patrimônio consolidado da empresa.
+app.get("/finance", sendMatrixPage("finance.html"));
+app.get("/finance.html", sendMatrixPage("finance.html"));
+
 // Envio/atualização manual de XML de NF-e para o Mercado Livre.
 app.get("/ml/xml", sendMatrixPage("xml-ml.html"));
 app.get("/xml-ml.html", sendMatrixPage("xml-ml.html"));
@@ -140,6 +144,7 @@ app.use(require("./src/routes/ml-sac-ai-review"));
 app.use(require("./src/routes/ml-questions-sac"));
 app.use(require("./src/routes/ml-claims-center"));
 app.use(require("./src/routes/ml-xml-upload"));
+app.use(require("./src/routes/finance"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/customers"));
 
