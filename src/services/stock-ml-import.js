@@ -5,6 +5,7 @@ const {
 } = require("./mercadolivre");
 
 const SYNC_SOURCE = "mercadolivre_kits";
+const BOOTSTRAP_REFRESH_MS = 10 * 60 * 1000;
 let activeImportPromise = null;
 
 function clean(value) {
@@ -24,6 +25,13 @@ function itemSellerSku(item) {
 
 function variationSellerSku(variation) {
   return clean(variation?.seller_custom_field) || skuFromAttributes(variation?.attributes);
+}
+
+function inferProductType(item) {
+  const title = clean(item?.title).toLowerCase();
+  const looksLikePc = /\b(pc|cpu|computador|desktop|microcomputador)\b/i.test(title);
+  const looksLikeUpgradeKit = /\bkit\b/i.test(title) && /(upgrade|placa\s*m[aã]e|processador|mem[oó]ria|intel|amd)/i.test(title);
+  return looksLikePc || looksLikeUpgradeKit ? "kit" : "simple";
 }
 
 async function listItemIds(account) {
@@ -94,6 +102,7 @@ async function upsertKit({ title, item, account, retryOnConflict = true }) {
   // Regra Matrix: a referência principal do produto Mercado Livre é SEMPRE o MLB.
   // Seller SKU continua salvo apenas como metadado/vínculo auxiliar.
   const reference = itemId.toUpperCase();
+  const productType = inferProductType(item);
   const directSellerSku = itemSellerSku(item) || null;
   const variations = Array.isArray(item?.variations) ? item.variations : [];
   const sellerSkus = [
@@ -116,7 +125,7 @@ async function upsertKit({ title, item, account, retryOnConflict = true }) {
       .from("inventory_products")
       .update({
         name: clean(title) || existing.name,
-        product_type: "kit",
+        product_type: productType,
         category: "Mercado Livre",
         metadata: {
           ...(existing.metadata || {}),
@@ -132,7 +141,7 @@ async function upsertKit({ title, item, account, retryOnConflict = true }) {
       .eq("id", existing.id)
       .select("id,sku")
       .single();
-    if (error) throw new Error(`Erro atualizando kit ${reference}: ${error.message}`);
+    if (error) throw new Error(`Erro atualizando produto ${reference}: ${error.message}`);
     product = data;
   } else {
     const { data, error } = await supabase
@@ -141,7 +150,7 @@ async function upsertKit({ title, item, account, retryOnConflict = true }) {
         sku: reference,
         name: clean(title) || reference,
         category: "Mercado Livre",
-        product_type: "kit",
+        product_type: productType,
         unit: "UN",
         minimum_stock: 0,
         average_cost: 0,
@@ -164,7 +173,7 @@ async function upsertKit({ title, item, account, retryOnConflict = true }) {
       if (duplicate && retryOnConflict) {
         return upsertKit({ title, item, account, retryOnConflict: false });
       }
-      throw new Error(`Erro criando kit ${reference}: ${error.message}`);
+      throw new Error(`Erro criando produto ${reference}: ${error.message}`);
     }
     product = data;
   }
@@ -224,6 +233,7 @@ async function upsertKit({ title, item, account, retryOnConflict = true }) {
     productId: product.id,
     reference,
     itemId: reference,
+    productType,
     variations: linkRows.length,
     sellerSkus: [...new Set(sellerSkus)]
   };
@@ -298,13 +308,15 @@ async function shouldBootstrap() {
     .select("last_finished_at,status")
     .eq("source", SYNC_SOURCE)
     .maybeSingle();
-  if (error) return true;
-  if (!data?.last_finished_at) return true;
-  return false;
+  if (error || !data?.last_finished_at) return true;
+
+  const lastFinishedAt = new Date(data.last_finished_at).getTime();
+  if (!Number.isFinite(lastFinishedAt)) return true;
+  return Date.now() - lastFinishedAt >= BOOTSTRAP_REFRESH_MS;
 }
 
 async function bootstrapMercadoLivreKits() {
-  if (!(await shouldBootstrap())) return { skipped: true, reason: "already_bootstrapped" };
+  if (!(await shouldBootstrap())) return { skipped: true, reason: "recently_synced" };
   return importMercadoLivreKits();
 }
 
