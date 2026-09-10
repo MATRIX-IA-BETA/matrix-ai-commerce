@@ -8,6 +8,10 @@ const {
   createStockMovement,
   processStockForMarketplaceOrder
 } = require("../services/stock");
+const {
+  importMercadoLivreKits,
+  bootstrapMercadoLivreKits
+} = require("../services/stock-ml-import");
 
 const BLING_CLIENT_ID = env.BLING_CLIENT_ID;
 const BLING_CLIENT_SECRET = env.BLING_CLIENT_SECRET;
@@ -199,5 +203,19 @@ router.get("/stock/low", async (req, res) => {
   }
 });
 
+router.post("/stock/import/mercadolivre-kits", async (req, res) => {
+  try {
+    const result = await importMercadoLivreKits();
+    res.json({ sucesso: true, resultado: result });
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, mensagem: erro.message });
+  }
+});
+
+setTimeout(() => {
+  bootstrapMercadoLivreKits()
+    .then(result => console.log("[ESTOQUE ML] bootstrap:", result))
+    .catch(error => console.error("[ESTOQUE ML] erro no bootstrap:", error));
+}, 8000).unref?.();
 
 module.exports = router;
