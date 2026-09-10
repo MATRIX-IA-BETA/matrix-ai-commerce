@@ -1,7 +1,6 @@
 const router = require("express").Router();
 const { supabase } = require("../db/supabase");
 const { sincronizarPedidoPorId } = require("../services/mercadolivre");
-const { processStockForMarketplaceOrder } = require("../services/stock");
 const {
   processarNotificacaoClaimML
 } = require("../services/sac");
@@ -70,7 +69,10 @@ router.post(
         const resource =
           String(payload.resource || "");
 
-        // Eventos relacionados a pedidos
+        // Eventos relacionados a pedidos.
+        // IMPORTANTE: nesta fase da Matrix, o webhook apenas sincroniza o pedido.
+        // A baixa de estoque fica MANUAL/ASSISTIDA e só será reativada quando
+        // a composição dos kits, substituições e conferências estiverem validadas.
         if (
           resource.startsWith("/orders/") ||
           payload.topic === "orders_v2"
@@ -82,12 +84,6 @@ router.post(
             await sincronizarPedidoPorId(
               match[1]
             );
-
-            try {
-              await processStockForMarketplaceOrder(match[1]);
-            } catch (stockError) {
-              console.error("Erro atualizando estoque pelo webhook:", stockError);
-            }
           }
         }
 
