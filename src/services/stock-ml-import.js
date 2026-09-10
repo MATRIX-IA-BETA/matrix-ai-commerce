@@ -18,11 +18,11 @@ function skuFromAttributes(attributes = []) {
   return clean(hit?.value_name || hit?.values?.[0]?.name || hit?.values?.[0]?.id);
 }
 
-function itemSku(item) {
+function itemSellerSku(item) {
   return clean(item?.seller_custom_field) || skuFromAttributes(item?.attributes);
 }
 
-function variationSku(variation) {
+function variationSellerSku(variation) {
   return clean(variation?.seller_custom_field) || skuFromAttributes(variation?.attributes);
 }
 
@@ -75,37 +75,43 @@ async function fetchItem(itemId, account) {
   return data;
 }
 
-async function findProductBySku(sku) {
+async function findProductByReference(reference) {
   const { data, error } = await supabase
     .from("inventory_products")
     .select("id,sku,name,product_type,metadata")
-    .eq("sku", sku)
+    .eq("sku", reference)
     .maybeSingle();
-  if (error) throw new Error(`Erro buscando SKU ${sku}: ${error.message}`);
+  if (error) throw new Error(`Erro buscando referência ${reference}: ${error.message}`);
   return data;
 }
 
-async function upsertKit({ sku, title, item, variation, account, retryOnConflict = true }) {
-  const normalizedSku = clean(sku);
+async function upsertKit({ title, item, account, retryOnConflict = true }) {
   const itemId = clean(item?.id);
-  const variationId = variation?.id != null ? clean(variation.id) : null;
-  const existing = await findProductBySku(normalizedSku);
+  if (!itemId || !/^MLB\d+$/i.test(itemId)) {
+    throw new Error(`Anúncio sem MLB válido: ${itemId || "vazio"}`);
+  }
+
+  // Regra Matrix: a referência principal do produto Mercado Livre é SEMPRE o MLB.
+  // Seller SKU continua salvo apenas como metadado/vínculo auxiliar.
+  const reference = itemId.toUpperCase();
+  const directSellerSku = itemSellerSku(item) || null;
+  const variations = Array.isArray(item?.variations) ? item.variations : [];
+  const sellerSkus = [
+    directSellerSku,
+    ...variations.map(variationSellerSku)
+  ].filter(Boolean);
 
   const itemRef = {
-    item_id: itemId,
-    variation_id: variationId,
+    item_id: reference,
+    variation_id: null,
     status: item?.status || null,
     permalink: item?.permalink || null
   };
 
+  const existing = await findProductByReference(reference);
   let product;
-  if (existing) {
-    const previousRefs = Array.isArray(existing?.metadata?.mercadolivre_items)
-      ? existing.metadata.mercadolivre_items
-      : [];
-    const refs = previousRefs.filter(ref => !(String(ref?.item_id) === itemId && String(ref?.variation_id || "") === String(variationId || "")));
-    refs.push(itemRef);
 
+  if (existing) {
     const { data, error } = await supabase
       .from("inventory_products")
       .update({
@@ -115,21 +121,25 @@ async function upsertKit({ sku, title, item, variation, account, retryOnConflict
         metadata: {
           ...(existing.metadata || {}),
           source: "mercadolivre",
-          mercadolivre_items: refs
+          reference_type: "mlb",
+          mlb: reference,
+          seller_sku: directSellerSku,
+          seller_skus: [...new Set(sellerSkus)],
+          mercadolivre_items: [itemRef]
         },
         updated_at: new Date().toISOString()
       })
       .eq("id", existing.id)
       .select("id,sku")
       .single();
-    if (error) throw new Error(`Erro atualizando kit ${normalizedSku}: ${error.message}`);
+    if (error) throw new Error(`Erro atualizando kit ${reference}: ${error.message}`);
     product = data;
   } else {
     const { data, error } = await supabase
       .from("inventory_products")
       .insert({
-        sku: normalizedSku,
-        name: clean(title) || normalizedSku,
+        sku: reference,
+        name: clean(title) || reference,
         category: "Mercado Livre",
         product_type: "kit",
         unit: "UN",
@@ -138,6 +148,10 @@ async function upsertKit({ sku, title, item, variation, account, retryOnConflict
         active: true,
         metadata: {
           source: "mercadolivre",
+          reference_type: "mlb",
+          mlb: reference,
+          seller_sku: directSellerSku,
+          seller_skus: [...new Set(sellerSkus)],
           mercadolivre_items: [itemRef]
         },
         updated_at: new Date().toISOString()
@@ -148,49 +162,71 @@ async function upsertKit({ sku, title, item, variation, account, retryOnConflict
     if (error) {
       const duplicate = String(error.message || "").toLowerCase().includes("duplicate key");
       if (duplicate && retryOnConflict) {
-        return upsertKit({ sku, title, item, variation, account, retryOnConflict: false });
+        return upsertKit({ title, item, account, retryOnConflict: false });
       }
-      throw new Error(`Erro criando kit ${normalizedSku}: ${error.message}`);
+      throw new Error(`Erro criando kit ${reference}: ${error.message}`);
     }
     product = data;
   }
 
-  let linkQuery = supabase
-    .from("inventory_marketplace_links")
-    .select("id")
-    .eq("marketplace", "mercadolivre")
-    .eq("external_item_id", itemId);
+  const linkRows = variations.length
+    ? variations.map(variation => ({
+        variationId: variation?.id != null ? clean(variation.id) : null,
+        sellerSku: variationSellerSku(variation) || directSellerSku,
+        availableQuantity: variation?.available_quantity != null
+          ? Number(variation.available_quantity)
+          : (item?.available_quantity != null ? Number(item.available_quantity) : null)
+      }))
+    : [{
+        variationId: null,
+        sellerSku: directSellerSku,
+        availableQuantity: item?.available_quantity != null ? Number(item.available_quantity) : null
+      }];
 
-  linkQuery = variationId
-    ? linkQuery.eq("variation_id", variationId)
-    : linkQuery.is("variation_id", null);
+  for (const row of linkRows) {
+    let linkQuery = supabase
+      .from("inventory_marketplace_links")
+      .select("id")
+      .eq("marketplace", "mercadolivre")
+      .eq("external_item_id", reference);
 
-  const { data: link, error: linkFindError } = await linkQuery.limit(1).maybeSingle();
-  if (linkFindError) throw new Error(`Erro buscando vínculo ${itemId}: ${linkFindError.message}`);
+    linkQuery = row.variationId
+      ? linkQuery.eq("variation_id", row.variationId)
+      : linkQuery.is("variation_id", null);
 
-  const linkRecord = {
-    product_id: product.id,
-    marketplace: "mercadolivre",
-    account_id: String(account.account_id || account.user_id || ""),
-    external_item_id: itemId,
-    external_user_product_id: item?.user_product_id != null ? String(item.user_product_id) : null,
-    variation_id: variationId,
-    seller_sku: normalizedSku,
-    sync_enabled: true,
-    last_external_quantity: item?.available_quantity != null ? Number(item.available_quantity) : null,
-    last_sync_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
+    const { data: link, error: linkFindError } = await linkQuery.limit(1).maybeSingle();
+    if (linkFindError) throw new Error(`Erro buscando vínculo ${reference}: ${linkFindError.message}`);
 
-  if (link) {
-    const { error } = await supabase.from("inventory_marketplace_links").update(linkRecord).eq("id", link.id);
-    if (error) throw new Error(`Erro atualizando vínculo ${itemId}: ${error.message}`);
-  } else {
-    const { error } = await supabase.from("inventory_marketplace_links").insert(linkRecord);
-    if (error) throw new Error(`Erro criando vínculo ${itemId}: ${error.message}`);
+    const linkRecord = {
+      product_id: product.id,
+      marketplace: "mercadolivre",
+      account_id: String(account.account_id || account.user_id || ""),
+      external_item_id: reference,
+      external_user_product_id: item?.user_product_id != null ? String(item.user_product_id) : null,
+      variation_id: row.variationId,
+      seller_sku: row.sellerSku || null,
+      sync_enabled: true,
+      last_external_quantity: row.availableQuantity,
+      last_sync_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    if (link) {
+      const { error } = await supabase.from("inventory_marketplace_links").update(linkRecord).eq("id", link.id);
+      if (error) throw new Error(`Erro atualizando vínculo ${reference}: ${error.message}`);
+    } else {
+      const { error } = await supabase.from("inventory_marketplace_links").insert(linkRecord);
+      if (error) throw new Error(`Erro criando vínculo ${reference}: ${error.message}`);
+    }
   }
 
-  return { productId: product.id, sku: normalizedSku, itemId, variationId };
+  return {
+    productId: product.id,
+    reference,
+    itemId: reference,
+    variations: linkRows.length,
+    sellerSkus: [...new Set(sellerSkus)]
+  };
 }
 
 async function doImport() {
@@ -209,7 +245,7 @@ async function doImport() {
   const summary = {
     anuncios_encontrados: ids.length,
     kits_criados_ou_atualizados: 0,
-    anuncios_sem_sku: [],
+    referencias_mlb: [],
     erros: []
   };
 
@@ -224,28 +260,9 @@ async function doImport() {
 
       try {
         const item = await fetchItem(itemId, account);
-        const directSku = itemSku(item);
-
-        if (directSku) {
-          await upsertKit({ sku: directSku, title: item.title, item, variation: null, account });
-          summary.kits_criados_ou_atualizados += 1;
-          continue;
-        }
-
-        const variations = Array.isArray(item?.variations) ? item.variations : [];
-        const skuVariations = variations
-          .map(variation => ({ variation, sku: variationSku(variation) }))
-          .filter(row => row.sku);
-
-        if (!skuVariations.length) {
-          summary.anuncios_sem_sku.push({ item_id: itemId, titulo: item?.title || null });
-          continue;
-        }
-
-        for (const row of skuVariations) {
-          await upsertKit({ sku: row.sku, title: item.title, item, variation: row.variation, account });
-          summary.kits_criados_ou_atualizados += 1;
-        }
+        const result = await upsertKit({ title: item.title, item, account });
+        summary.kits_criados_ou_atualizados += 1;
+        summary.referencias_mlb.push(result.reference);
       } catch (error) {
         summary.erros.push({ item_id: itemId, erro: error.message });
       }
@@ -253,6 +270,8 @@ async function doImport() {
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, ids.length)) }, () => worker()));
+
+  summary.referencias_mlb = [...new Set(summary.referencias_mlb)].sort();
 
   const finishedAt = new Date().toISOString();
   await supabase.from("inventory_sync_state").upsert({
