@@ -1,6 +1,15 @@
 const { supabase } = require("../db/supabase");
 const { nowIso } = require("../utils/common");
 
+function actualCost(product) {
+  const metadata = product?.metadata || {};
+  for (const value of [metadata.actual_cost, metadata.manual_cost, metadata.last_cost, product?.average_cost]) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return 0;
+}
+
 async function getStockBalance(productId) {
   const { data, error } = await supabase
     .from("inventory_stock")
@@ -23,7 +32,7 @@ async function getStockBalance(productId) {
 async function getProduct(productId) {
   const { data, error } = await supabase
     .from("inventory_products")
-    .select("id,sku,name,product_type,average_cost,active")
+    .select("id,sku,name,product_type,average_cost,metadata,active")
     .eq("id", productId)
     .single();
 
@@ -40,7 +49,7 @@ async function getProductsByIds(ids) {
 
   const { data, error } = await supabase
     .from("inventory_products")
-    .select("id,sku,name,product_type,average_cost,active")
+    .select("id,sku,name,product_type,average_cost,metadata,active")
     .in("id", uniqueIds);
 
   if (error) {
@@ -124,7 +133,7 @@ async function previewStockTargets(productId, multiplier = 1) {
           product_id: Number(product.id),
           sku: product.sku,
           name: product.name,
-          unit_cost: Number(product.average_cost || 0),
+          unit_cost: actualCost(product),
           available
         },
         required_quantity: required,
@@ -136,33 +145,10 @@ async function previewStockTargets(productId, multiplier = 1) {
   }
 
   const bom = await readBomDefinition(product.id);
-
-  // Enquanto um kit ainda não tiver composição, ele é tratado como uma unidade
-  // própria. Isso preserva o comportamento existente sem inventar componentes.
   if (!bom.components.length) {
-    const balance = await getStockBalance(product.id);
-    const required = factor;
-    const available = Number(balance.available || 0);
-
-    return {
-      product,
-      multiplier: factor,
-      lines: [{
-        decision_key: `product:${product.id}`,
-        bom_component_id: null,
-        primary: {
-          product_id: Number(product.id),
-          sku: product.sku,
-          name: product.name,
-          unit_cost: Number(product.average_cost || 0),
-          available
-        },
-        required_quantity: required,
-        shortage: available < required,
-        substitutes: []
-      }],
-      requires_decision: available < required
-    };
+    const error = new Error(`Kit ${product.sku || product.name} sem composição. Cadastre a BOM antes de processar estoque.`);
+    error.code = "KIT_BOM_REQUIRED";
+    throw error;
   }
 
   const substituteIds = bom.substitutes.map(row => Number(row.substitute_product_id));
@@ -197,7 +183,7 @@ async function previewStockTargets(productId, multiplier = 1) {
         product_id: substituteId,
         sku: substituteProduct.sku || null,
         name: substituteProduct.name || null,
-        unit_cost: Number(substituteProduct.average_cost || 0),
+        unit_cost: actualCost(substituteProduct),
         priority: Number(row.priority || 1),
         quantity_factor: quantityFactor,
         required_quantity: substituteRequired,
@@ -213,7 +199,7 @@ async function previewStockTargets(productId, multiplier = 1) {
         product_id: primaryId,
         sku: primaryProduct.sku || null,
         name: primaryProduct.name || null,
-        unit_cost: Number(primaryProduct.average_cost || 0),
+        unit_cost: actualCost(primaryProduct),
         available: primaryAvailable
       },
       required_quantity: required,
@@ -568,9 +554,6 @@ async function processStockForMarketplaceOrder(marketplaceOrderId, options = {})
     requires_stock_decision: itemPlans.some(plan => plan.lines.some(line => line.shortage))
   };
 
-  // Regra de segurança da fase atual: nunca baixa um pedido apenas porque a rota
-  // foi chamada. Primeiro devolve a prévia; uma segunda chamada precisa trazer
-  // confirmed=true e as decisões para cada falta de estoque.
   if (!confirmed) {
     return {
       processed: false,
@@ -593,7 +576,6 @@ async function processStockForMarketplaceOrder(marketplaceOrderId, options = {})
   const unresolved = [];
 
   for (const plan of itemPlans) {
-    // resolvePreviewWithDecisions cria a mesma chave de contexto usada na prévia.
     const rawPreview = {
       product: plan.product,
       multiplier: plan.sold_quantity,
@@ -603,11 +585,7 @@ async function processStockForMarketplaceOrder(marketplaceOrderId, options = {})
       }))
     };
 
-    const resolved = resolvePreviewWithDecisions(
-      rawPreview,
-      decisions,
-      plan.item_index
-    );
+    const resolved = resolvePreviewWithDecisions(rawPreview, decisions, plan.item_index);
 
     unresolved.push(...resolved.unresolved.map(line => ({
       ...line,
@@ -615,10 +593,7 @@ async function processStockForMarketplaceOrder(marketplaceOrderId, options = {})
       variation_id: plan.variation_id
     })));
 
-    targetsByItem.push({
-      ...plan,
-      targets: resolved.targets
-    });
+    targetsByItem.push({ ...plan, targets: resolved.targets });
   }
 
   if (unresolved.length) {
@@ -635,9 +610,6 @@ async function processStockForMarketplaceOrder(marketplaceOrderId, options = {})
 
   for (const plan of targetsByItem) {
     for (const target of plan.targets) {
-      // A chave usa o componente primário, não o produto substituto escolhido.
-      // Assim a mesma linha do pedido não pode ser baixada duas vezes mudando
-      // apenas a decisão de substituição em uma nova tentativa.
       const primaryId = target.substituted_from_product_id || target.product_id;
       const baseKey = `ml:${marketplaceOrderId}:${plan.item_id}:${plan.variation_id || 0}:${plan.item_index}:component:${primaryId}`;
 
