@@ -8,7 +8,7 @@
   function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
   function esc(value){
     return String(value ?? '').replace(/[&<>"']/g, char => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[char]));
   }
   function brl(value){
