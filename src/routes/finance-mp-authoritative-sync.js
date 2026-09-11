@@ -87,13 +87,65 @@ function netValue(payment) {
 function breakdown(rows, selector) {
   const out = {};
   for (const p of rows) {
-    const key = String(selector(p) || "missing").toLowerCase();
+    const key = String(selector(p) ?? "missing").toLowerCase();
     if (!out[key]) out[key] = { count: 0, net: 0 };
     out[key].count++;
     out[key].net += netValue(p).value;
   }
   for (const value of Object.values(out)) value.net = money(value.net);
   return out;
+}
+
+function compactReceivableAudit(rows) {
+  const sumWhere = predicate => money(rows.filter(predicate).reduce((sum, p) => sum + netValue(p).value, 0));
+  const countWhere = predicate => rows.filter(predicate).length;
+  const hasOrder = p => Boolean(p?.order?.id || p?.order_id);
+  const hasItems = p => Array.isArray(p?.additional_info?.items) && p.additional_info.items.length > 0;
+  const isRegular = p => String(p?.operation_type || "").toLowerCase() === "regular_payment";
+  const isTransfer = p => String(p?.operation_type || "").toLowerCase() === "money_transfer";
+  const marketplace = p => p?.marketplace ?? p?.metadata?.marketplace ?? p?.additional_info?.marketplace ?? "missing";
+  const poi = p => p?.point_of_interaction?.type ?? p?.point_of_interaction?.business_info?.sub_unit ?? "missing";
+
+  const suspicious = rows
+    .filter(p => !isRegular(p) || !hasOrder(p) || !hasItems(p))
+    .map(p => ({
+      id: p?.id,
+      net: netValue(p).value,
+      gross: money(p?.transaction_amount),
+      operation: p?.operation_type || null,
+      order: p?.order?.id || p?.order_id || null,
+      items: Array.isArray(p?.additional_info?.items) ? p.additional_info.items.length : 0,
+      marketplace: marketplace(p),
+      poi: poi(p),
+      payment_type: p?.payment_type_id || p?.payment_type || null,
+      method: p?.payment_method_id || null,
+      description: String(p?.description || "").slice(0, 90),
+      external_reference: p?.external_reference || null,
+      release_date: p?.money_release_date || null
+    }))
+    .slice(0, 120);
+
+  return {
+    total: { count: rows.length, net: sumWhere(() => true) },
+    operation: breakdown(rows, p => p?.operation_type),
+    payment_type: breakdown(rows, p => p?.payment_type_id || p?.payment_type),
+    marketplace: breakdown(rows, marketplace),
+    order_presence: {
+      with_order: { count: countWhere(hasOrder), net: sumWhere(hasOrder) },
+      without_order: { count: countWhere(p => !hasOrder(p)), net: sumWhere(p => !hasOrder(p)) }
+    },
+    items_presence: {
+      with_items: { count: countWhere(hasItems), net: sumWhere(hasItems) },
+      without_items: { count: countWhere(p => !hasItems(p)), net: sumWhere(p => !hasItems(p)) }
+    },
+    regular_vs_other: {
+      regular: { count: countWhere(isRegular), net: sumWhere(isRegular) },
+      money_transfer: { count: countWhere(isTransfer), net: sumWhere(isTransfer) },
+      other: { count: countWhere(p => !isRegular(p) && !isTransfer(p)), net: sumWhere(p => !isRegular(p) && !isTransfer(p)) }
+    },
+    point_of_interaction: breakdown(rows, poi),
+    suspicious
+  };
 }
 
 async function pagedSearch(account, params, label, maxRows = 5000) {
@@ -165,9 +217,6 @@ async function searchHeld(account, now) {
 
   console.log("[Financeiro MP] mediações por liberação:", breakdown(rows, p => p?.money_release_status));
 
-  // O valor exibido como “Retido” no saldo do Mercado Pago corresponde ao
-  // dinheiro que já havia sido liberado e depois foi bloqueado pela mediação.
-  // Foi validado contra o painel real: esse grupo fecha centavo por centavo.
   return rows.filter(p =>
     String(p?.status || "").toLowerCase() === "in_mediation" &&
     String(p?.money_release_status || "").toLowerCase() === "released"
@@ -224,9 +273,8 @@ async function runSync() {
     searchHeld(account, now)
   ]);
 
-  console.log("[Financeiro MP] A receber por status real:", breakdown(receivableRows, p => p?.status));
-  console.log("[Financeiro MP] A receber por operação:", breakdown(receivableRows, p => p?.operation_type));
-  console.log("[Financeiro MP] A receber por detalhe:", breakdown(receivableRows, p => p?.status_detail));
+  const audit = compactReceivableAudit(receivableRows);
+  console.log("[Financeiro MP] RECEIVABLE AUDIT:", JSON.stringify(audit));
 
   const receivable = sumNet(receivableRows);
   const held = sumNet(heldRows);
