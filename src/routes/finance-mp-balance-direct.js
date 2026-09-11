@@ -82,60 +82,69 @@ function extractTotalBalance(payload) {
 
 async function saveDirectBalance(account, availableBalance, totalBalance) {
   const now = new Date().toISOString();
-  const { data: existing, error: existingError } = await supabase
+
+  // Reaproveita o próprio card/registro bancário que já era exibido para o
+  // Mercado Pago via Pluggy. A origem lógica do saldo passa a ser a API direta
+  // do MP, sem criar uma segunda conta e sem duplicar o patrimônio.
+  const { data: pluggyRows, error: pluggyError } = await supabase
     .from("financial_accounts")
-    .select("id")
-    .eq("source", "mercadopago")
-    .contains("metadata", { matrix_key: MATRIX_KEY })
-    .limit(1)
-    .maybeSingle();
-  if (existingError) throw new Error(existingError.message);
-
-  const record = {
-    name: "Mercado Pago Empresas",
-    account_type: "asset",
-    category: "Banco",
-    source: "mercadopago",
-    current_balance: availableBalance,
-    include_in_total: true,
-    active: true,
-    metadata: {
-      matrix_key: MATRIX_KEY,
-      institution: "Mercado Pago Empresas",
-      balance_source: "mercadopago_api_direct",
-      available_balance: availableBalance,
-      total_balance: totalBalance,
-      mp_user_id: String(account.user_id || account.account_id || ""),
-      last_synced_at: now
-    },
-    updated_at: now
-  };
-
-  if (existing?.id) {
-    const { error } = await supabase.from("financial_accounts").update(record).eq("id", existing.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase.from("financial_accounts").insert(record);
-    if (error) throw new Error(error.message);
-  }
-
-  // O MP deixa de compor o caixa pela Pluggy somente depois que a API direta
-  // respondeu com um saldo válido. Cora e demais bancos seguem intactos.
-  const { data: pluggyAccounts, error: pluggyError } = await supabase
-    .from("financial_accounts")
-    .select("id,metadata")
+    .select("id,name,metadata")
     .eq("source", "pluggy")
     .eq("active", true);
   if (pluggyError) throw new Error(pluggyError.message);
 
-  for (const row of pluggyAccounts || []) {
-    const institution = String(row?.metadata?.institution || "");
-    if (!/mercado pago/i.test(institution)) continue;
+  const existingPluggyMp = (pluggyRows || []).find(row =>
+    /mercado pago/i.test(String(row?.metadata?.institution || row?.name || ""))
+  );
+
+  const metadata = {
+    ...(existingPluggyMp?.metadata || {}),
+    matrix_key: MATRIX_KEY,
+    institution: "Mercado Pago Empresas",
+    balance_source: "mercadopago_api_direct",
+    available_balance: availableBalance,
+    total_balance: totalBalance,
+    mp_user_id: String(account.user_id || account.account_id || ""),
+    last_synced_at: now
+  };
+
+  if (existingPluggyMp?.id) {
     const { error } = await supabase
       .from("financial_accounts")
-      .update({ include_in_total: false, updated_at: now })
-      .eq("id", row.id);
+      .update({
+        current_balance: availableBalance,
+        include_in_total: true,
+        active: true,
+        metadata,
+        updated_at: now
+      })
+      .eq("id", existingPluggyMp.id);
     if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("financial_accounts").insert({
+      name: "Mercado Pago Empresas",
+      account_type: "asset",
+      category: "Banco",
+      source: "mercadopago",
+      current_balance: availableBalance,
+      include_in_total: true,
+      active: true,
+      metadata,
+      updated_at: now
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  // Caso uma versão anterior já tenha criado uma conta direta separada,
+  // desativa-a para garantir que o saldo do MP entre uma única vez no caixa.
+  const { data: duplicateDirect } = await supabase
+    .from("financial_accounts")
+    .select("id")
+    .eq("source", "mercadopago")
+    .contains("metadata", { matrix_key: MATRIX_KEY });
+  for (const row of duplicateDirect || []) {
+    if (!existingPluggyMp?.id) continue;
+    await supabase.from("financial_accounts").update({ include_in_total: false, active: false, updated_at: now }).eq("id", row.id);
   }
 
   return now;
@@ -171,6 +180,15 @@ async function sync() {
   return syncInFlight;
 }
 
+// Toda atualização financeira do Mercado Livre atualiza primeiro o saldo
+// disponível do Mercado Pago pela API direta e depois segue para a rotina de
+// a receber/retidos. Se a consulta direta falhar, preservamos o saldo anterior.
+router.post("/api/finance/mercadolivre/sync", async (req, res, next) => {
+  try { await sync(); }
+  catch (error) { console.warn("[Mercado Pago Saldo Direto] pré-sync ML:", error.message); }
+  next();
+});
+
 router.post("/api/finance/mercadopago/balance/sync", async (req, res) => {
   try {
     res.json({ sucesso: true, ...(await sync()) });
@@ -179,7 +197,7 @@ router.post("/api/finance/mercadopago/balance/sync", async (req, res) => {
     res.status(error.code === "MP_AUTH_REQUIRED" ? 428 : 502).json({
       sucesso: false,
       mensagem: error.message,
-      fallback_pluggy_preservado: true
+      saldo_anterior_preservado: true
     });
   }
 });
@@ -188,13 +206,11 @@ router.get("/api/finance/mercadopago/balance/status", async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("financial_accounts")
-      .select("id,name,current_balance,include_in_total,metadata,updated_at")
-      .eq("source", "mercadopago")
-      .contains("metadata", { matrix_key: MATRIX_KEY })
-      .limit(1)
-      .maybeSingle();
+      .select("id,name,current_balance,include_in_total,source,metadata,updated_at")
+      .eq("active", true);
     if (error) throw new Error(error.message);
-    res.json({ sucesso: true, conectado: Boolean(await getAccount().catch(() => null)), conta: data || null, ultima_sincronizacao: lastResult });
+    const account = (data || []).find(row => row?.metadata?.matrix_key === MATRIX_KEY) || null;
+    res.json({ sucesso: true, conectado: Boolean(await getAccount().catch(() => null)), conta: account, ultima_sincronizacao: lastResult });
   } catch (error) {
     res.status(500).json({ sucesso: false, mensagem: error.message });
   }
