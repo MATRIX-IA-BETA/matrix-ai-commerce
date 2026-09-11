@@ -1,82 +1,52 @@
 const router = require("express").Router();
-const { getMercadoLivreAccount, mercadoLivreFetch } = require("../services/mercadolivre");
+const { getMercadoPagoAccount, mpRequest } = require("./finance-mp-release-report");
 
-const TARGET_ORDERS = new Set(["2000018250502448", "2000018197785500"]);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const SNAPSHOT_AT = new Date("2026-09-11T00:29:00.000Z");
+const n = v => Number.isFinite(Number(v)) ? Number(v) : 0;
+const money = v => Number(n(v).toFixed(2));
 
-async function json(response) {
-  const text = await response.text();
-  try { return text ? JSON.parse(text) : {}; } catch { return { raw: text.slice(0,500) }; }
+function net(p) {
+  const v = Number(p?.transaction_details?.net_received_amount);
+  if (Number.isFinite(v)) return money(Math.max(0, v));
+  return money(Math.max(0, n(p?.transaction_amount) - n(p?.transaction_amount_refunded)));
 }
 
-function orderId(claim) {
-  if (claim?.order_id != null) return String(claim.order_id);
-  if (String(claim?.resource || "").toLowerCase() === "order" && claim?.resource_id != null) return String(claim.resource_id);
-  return null;
-}
-
-function slimClaim(c) {
-  return {
-    id: c?.id ?? c?.claim_id ?? null,
-    order_id: orderId(c),
-    status: c?.status ?? null,
-    stage: c?.stage ?? null,
-    type: c?.type ?? null,
-    reason_id: c?.reason_id ?? null,
-    claimed_quantity: c?.claimed_quantity ?? null,
-    resource: c?.resource ?? null,
-    resource_id: c?.resource_id ?? null,
-    related_entities: c?.related_entities ?? null,
-    resolution: c?.resolution ?? null,
-    date_created: c?.date_created ?? null,
-    last_updated: c?.last_updated ?? null,
-    players: c?.players ?? null
-  };
-}
-
-async function audit() {
-  const account = await getMercadoLivreAccount();
-  if (!account) throw new Error("Mercado Livre não conectado.");
-  const params = new URLSearchParams({
-    "players.user_id": String(account.user_id),
-    "players.role": "respondent",
-    status: "opened",
-    limit: "50",
-    offset: "0",
-    sort: "last_updated:desc"
-  });
-  const base = await mercadoLivreFetch(`/post-purchase/v1/claims/search?${params}`, account);
-  const payload = await json(base.response);
-  if (!base.response.ok) throw new Error(`Claims HTTP ${base.response.status}`);
-  const claims = (Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload?.results) ? payload.results : []))
-    .filter(c => TARGET_ORDERS.has(orderId(c)));
-
-  const rows = [];
-  for (const c of claims) {
-    const id = String(c.id ?? c.claim_id);
-    const paths = [
-      ["claim", `/post-purchase/v1/claims/${id}`],
-      ["detail", `/post-purchase/v1/claims/${id}/detail`],
-      ["returns_v2", `/post-purchase/v2/claims/${id}/returns`],
-      ["returns_v1", `/post-purchase/v1/claims/${id}/returns`]
-    ];
-    const detail = { search: slimClaim(c) };
-    for (const [key,path] of paths) {
-      const r = await mercadoLivreFetch(path, account);
-      const data = await json(r.response);
-      detail[key] = { http: r.response.status, data: r.response.ok ? data : { error: data?.message || data?.error || data?.cause || null } };
-    }
-    rows.push(detail);
+async function search(account) {
+  const rows=[]; let offset=0,total=null;
+  const end = new Date(SNAPSHOT_AT.getTime()+180*86400000);
+  while(offset<5000){
+    const q=new URLSearchParams({sort:"money_release_date",criteria:"asc",range:"money_release_date",begin_date:SNAPSHOT_AT.toISOString(),end_date:end.toISOString(),limit:"100",offset:String(offset)});
+    const {response,data}=await mpRequest(`/v1/payments/search?${q}`,account);
+    if(!response.ok) throw new Error(`HTTP ${response.status}: ${data?.message||data?.error||"erro"}`);
+    const page=Array.isArray(data?.results)?data.results:[];
+    rows.push(...page); total=Number(data?.paging?.total??total); offset+=page.length;
+    if(!page.length||page.length<100||(Number.isFinite(total)&&offset>=total)) break;
+    await sleep(180);
   }
-  console.log("[Financeiro ML PENDING CLAIM DETAILS]", JSON.stringify(rows));
-  return rows;
+  return rows.filter(p=>{
+    const approved=new Date(p?.date_approved||p?.date_created||0).getTime();
+    const release=new Date(p?.money_release_date||0).getTime();
+    return String(p?.status||"").toLowerCase()==="approved" && String(p?.money_release_status||"").toLowerCase()==="pending" && approved<=SNAPSHOT_AT.getTime() && release>SNAPSHOT_AT.getTime();
+  });
 }
 
-router.get("/api/finance/mercadopago/ml-match-diagnostic", async (req,res)=>{
-  try { res.json({ sucesso:true, claims: await audit() }); }
-  catch (error) { res.status(502).json({ sucesso:false, mensagem:error.message }); }
-});
+async function audit(){
+  const account=await getMercadoPagoAccount();
+  const rows=await search(account);
+  const groups={};
+  for(const p of rows){
+    const collector=String(p?.collector?.id??p?.collector_id??"missing");
+    if(!groups[collector]) groups[collector]={count:0,net:0,rows:[]};
+    groups[collector].count++; groups[collector].net+=net(p);
+    if(collector!==String(account.user_id||account.account_id)) groups[collector].rows.push({id:p?.id,net:net(p),gross:money(p?.transaction_amount),order_id:p?.order?.id??p?.order_id??null,description:String(p?.description||"").slice(0,100),poi:p?.point_of_interaction?.type??null,external_reference:p?.external_reference??null});
+  }
+  for(const g of Object.values(groups)) g.net=money(g.net);
+  const result={snapshot_at:SNAPSHOT_AT.toISOString(),target_collector:String(account.user_id||account.account_id),total:{count:rows.length,net:money(rows.reduce((s,p)=>s+net(p),0))},by_collector:groups};
+  console.log("[Financeiro MP COLLECTOR BREAKDOWN]",JSON.stringify(result));
+  return result;
+}
 
-const startup = setTimeout(()=>audit().catch(error=>console.warn("[Financeiro ML PENDING CLAIM DETAILS] falhou:", error.message)),18000);
-startup.unref?.();
-
-module.exports = router;
+router.get("/api/finance/mercadopago/ml-match-diagnostic",async(req,res)=>{try{res.json({sucesso:true,...await audit()})}catch(error){res.status(502).json({sucesso:false,mensagem:error.message})}});
+const startup=setTimeout(()=>audit().catch(e=>console.warn("[Financeiro MP COLLECTOR BREAKDOWN] falhou:",e.message)),18000); startup.unref?.();
+module.exports=router;
