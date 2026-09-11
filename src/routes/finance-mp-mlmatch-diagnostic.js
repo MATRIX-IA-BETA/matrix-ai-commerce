@@ -21,6 +21,7 @@ async function futureReceivables(account) {
   const now = new Date();
   const end = new Date(now.getTime() + 180 * 86400000);
   const limit = 100;
+  const collectorId = String(account.user_id || account.account_id || "");
   let offset = 0;
   let total = null;
   const rows = [];
@@ -33,6 +34,7 @@ async function futureReceivables(account) {
       begin_date: now.toISOString(),
       end_date: end.toISOString(),
       status: "approved",
+      "collector.id": collectorId,
       limit: String(limit),
       offset: String(offset)
     });
@@ -110,13 +112,14 @@ async function audit() {
   for (const v of Object.values(prefix)) v.net = money(v.net);
 
   const result = {
+    collector_id: String(account.user_id || account.account_id || ""),
     total: { count: rows.length, net: sum(rows.map(p => ({ net: netValue(p) }))) },
     matched_ml_orders: { count: matched.length, net: sum(matched) },
     unmatched: { count: unmatched.length, net: sum(unmatched) },
     unmatched_order_prefix: prefix,
     unmatched_rows: unmatched
   };
-  console.log("[Financeiro MP ML-MATCH]", JSON.stringify(result));
+  console.log("[Financeiro MP ML-MATCH COLLECTOR]", JSON.stringify(result));
   return result;
 }
 
@@ -125,7 +128,7 @@ router.get("/api/finance/mercadopago/ml-match-diagnostic", async (req, res) => {
   catch (error) { res.status(502).json({ sucesso: false, mensagem: error.message }); }
 });
 
-const startup = setTimeout(() => audit().catch(error => console.warn("[Financeiro MP ML-MATCH] falhou:", error.message)), 18000);
+const startup = setTimeout(() => audit().catch(error => console.warn("[Financeiro MP ML-MATCH COLLECTOR] falhou:", error.message)), 18000);
 startup.unref?.();
 
 module.exports = router;
