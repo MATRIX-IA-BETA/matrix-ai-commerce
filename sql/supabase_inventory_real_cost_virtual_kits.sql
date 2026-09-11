@@ -2,6 +2,7 @@
 -- MATRIX AI COMMERCE - CUSTO REAL + KITS VIRTUAIS
 -- Kit/PC é uma composição (BOM), nunca patrimônio físico próprio.
 -- O valor patrimonial usa o custo real atual quando disponível.
+-- Mantém exatamente as colunas existentes da view para atualização segura.
 -- =========================================================
 
 create or replace view public.inventory_stock as
@@ -35,7 +36,6 @@ select
   p.unit,
   p.minimum_stock,
   p.actual_cost as average_cost,
-  p.actual_cost,
   p.supplier_name,
   p.location_code,
   p.active,
