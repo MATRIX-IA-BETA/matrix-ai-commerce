@@ -5,4 +5,5 @@ router.post('/api/claims-ai-suggest',async(req,res)=>{
  catch(e){res.status(500).json({sucesso:false,mensagem:e.message});}
 });
 router.use(require('./sales-center'));
+router.use(require('./manual-sale-nfe'));
 module.exports=router;
