@@ -5,6 +5,7 @@ const BASE = "https://api.pluggy.ai";
 const CLIENT_USER_ID = "matrix-ai-commerce";
 const POLL_MS = 2500;
 const POLL_LIMIT = 18;
+const FORCED_REFRESH_GUARD_MS = 55 * 60 * 1000;
 let keyCache = null;
 let keyAt = 0;
 
@@ -103,7 +104,7 @@ async function saveAccounts(itemId, item, accounts) {
     .from("financial_accounts")
     .select("id,metadata")
     .eq("source", "pluggy");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`Erro lendo contas Pluggy: ${error.message}`);
 
   const byExternal = new Map();
   for (const row of existing || []) {
@@ -142,10 +143,10 @@ async function saveAccounts(itemId, item, accounts) {
     const rowId = byExternal.get(String(account.id));
     if (rowId) {
       const { error: updateError } = await supabase.from("financial_accounts").update(record).eq("id", rowId);
-      if (updateError) throw new Error(updateError.message);
+      if (updateError) throw new Error(`Erro atualizando conta Pluggy: ${updateError.message}`);
     } else {
       const { error: insertError } = await supabase.from("financial_accounts").insert(record);
-      if (insertError) throw new Error(insertError.message);
+      if (insertError) throw new Error(`Erro salvando conta Pluggy: ${insertError.message}`);
     }
     saved.push({ id: String(account.id), name: record.name, balance, type });
   }
@@ -203,35 +204,65 @@ async function allConnections() {
   return data || [];
 }
 
+function recentlyForced(connection) {
+  const last = new Date(connection?.metadata?.matrix_last_forced_refresh_at || 0).getTime();
+  return Number.isFinite(last) && last > 0 && Date.now() - last < FORCED_REFRESH_GUARD_MS;
+}
+
 router.post("/api/finance/open-finance/sync", async (req, res) => {
   try {
     if (!configured()) return res.status(503).json({ sucesso: false, mensagem: "Pluggy ainda não configurada." });
     const connections = await allConnections();
-    const results = await Promise.all(connections.map(async connection => {
-      try { return { sucesso: true, ...(await refreshAndSync(connection.external_connection_id)) }; }
-      catch (error) { return { sucesso: false, item_id: connection.external_connection_id, institution: connection.institution_name, mensagem: error.message }; }
-    }));
+    const results = [];
+
+    // Atualiza instituição por instituição. Evita duas execuções concorrentes na
+    // Pluggy e garante que Cora, Mercado Pago e futuras conexões usem o mesmo
+    // fluxo: PATCH do Item -> aguarda conclusão -> lê e grava o saldo novo.
+    for (const connection of connections) {
+      try {
+        results.push({ sucesso: true, ...(await refreshAndSync(connection.external_connection_id)) });
+      } catch (error) {
+        results.push({
+          sucesso: false,
+          item_id: connection.external_connection_id,
+          institution: connection.institution_name,
+          mensagem: error.message
+        });
+      }
+    }
+
     res.json({ sucesso: true, connections: results.length, resultados: results });
   } catch (error) {
     res.status(500).json({ sucesso: false, mensagem: error.message });
   }
 });
 
-// Uma atualização inicial é tentada apenas para o Mercado Pago e somente se a
-// Matrix não tiver forçado uma sincronização na última hora. Evita que deploys
-// sucessivos martelhem a instituição.
+// Na inicialização, todas as conexões Pluggy recebem o mesmo tratamento de
+// atualização em tempo real. A trava individual de 55 minutos evita que novos
+// deploys forcem a mesma instituição repetidamente.
 const startup = setTimeout(async () => {
   try {
     if (!configured()) return;
     const connections = await allConnections();
-    const mp = connections.find(c => /mercado pago/i.test(String(c.institution_name || "")));
-    if (!mp) return;
-    const last = new Date(mp?.metadata?.matrix_last_forced_refresh_at || 0).getTime();
-    if (Number.isFinite(last) && Date.now() - last < 55 * 60 * 1000) return;
-    const result = await refreshAndSync(mp.external_connection_id);
-    console.log("[Pluggy Live Refresh] Mercado Pago:", result);
+
+    for (const connection of connections) {
+      const institution = connection.institution_name || "Instituição financeira";
+      if (recentlyForced(connection)) {
+        console.log(`[Pluggy Live Refresh] ${institution}: ignorado, atualização forçada recente.`);
+        continue;
+      }
+
+      try {
+        const result = await refreshAndSync(connection.external_connection_id);
+        console.log(`[Pluggy Live Refresh] ${institution}:`, result);
+      } catch (error) {
+        console.warn(`[Pluggy Live Refresh] ${institution}: atualização inicial falhou:`, error.message);
+      }
+
+      await sleep(500);
+    }
   } catch (error) {
-    console.warn("[Pluggy Live Refresh] atualização inicial falhou:", error.message);
+    console.warn("[Pluggy Live Refresh] atualização inicial das conexões falhou:", error.message);
   }
 }, 10000);
 startup.unref?.();
