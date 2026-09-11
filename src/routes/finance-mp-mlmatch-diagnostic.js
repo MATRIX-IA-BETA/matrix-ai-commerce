@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const { getMercadoPagoAccount, mpRequest } = require("./finance-mp-release-report");
 
+const REPORT_ID = "103130211";
 const TARGETS = [
   "175963503433","175480687905","175481616175","178328526116",
   "2000018250502448","2000018197785500","2000018392726278"
@@ -74,22 +75,30 @@ async function audit() {
 
   const configReq = await mpRequest("/v1/account/settlement_report/config", account);
   const listReq = await mpRequest("/v1/account/settlement_report/list", account);
+  if (!listReq.response.ok) throw new Error(`Settlement list HTTP ${listReq.response.status}`);
+
   const list = Array.isArray(listReq.data) ? listReq.data : (Array.isArray(listReq.data?.results) ? listReq.data.results : []);
+  const reportAnyStatus = list.find(r => String(r.id) === REPORT_ID) || null;
   const reports = list.map(r => ({
     id:r.id,status:r.status,begin_date:r.begin_date,end_date:r.end_date,file_name:r.file_name,generation_date:r.generation_date,last_modified:r.last_modified
   }));
-  console.log("[Financeiro MP SETTLEMENT CHECK]", JSON.stringify({ config_http:configReq.response.status, scheduled:configReq.data?.scheduled, reports }));
+  console.log("[Financeiro MP SETTLEMENT WATCH]", JSON.stringify({
+    config_http:configReq.response.status,
+    scheduled:configReq.data?.scheduled,
+    target: reportAnyStatus ? { id:reportAnyStatus.id,status:reportAnyStatus.status,file_name:reportAnyStatus.file_name,last_modified:reportAnyStatus.last_modified } : null
+  }));
 
-  const report = list.find(r => r.file_name && String(r.status || "").toLowerCase() === "processed" && String(r.begin_date || "").startsWith("2026-08-25"));
-  if (!report) return { processed:false, reports };
+  if (!reportAnyStatus || String(reportAnyStatus.status || "").toLowerCase() !== "processed" || !reportAnyStatus.file_name) {
+    return { processed:false, report:reportAnyStatus, reports };
+  }
 
-  const csv = await rawGet(account, `/v1/account/settlement_report/${encodeURIComponent(report.file_name)}`);
+  const csv = await rawGet(account, `/v1/account/settlement_report/${encodeURIComponent(reportAnyStatus.file_name)}`);
   const { headers, rows } = parseCsv(csv);
   const targetRows = rows.filter(matches);
   const specialRows = rows.filter(r => !["SETTLEMENT","SETTLEMENT_SHIPPING"].includes(String(r.TRANSACTION_TYPE || "").toUpperCase()));
   const result = {
     processed:true,
-    report:{id:report.id,status:report.status,file_name:report.file_name,begin_date:report.begin_date,end_date:report.end_date},
+    report:{id:reportAnyStatus.id,status:reportAnyStatus.status,file_name:reportAnyStatus.file_name,begin_date:reportAnyStatus.begin_date,end_date:reportAnyStatus.end_date},
     headers,
     total_rows:rows.length,
     by_type:summarize(rows),
@@ -105,6 +114,26 @@ router.get("/api/finance/mercadopago/ml-match-diagnostic", async (req,res)=>{
   catch(error){ res.status(502).json({sucesso:false,mensagem:error.message}); }
 });
 
-const startup=setTimeout(()=>audit().catch(error=>console.warn("[Financeiro MP SETTLEMENT CHECK] falhou:",error.message)),12000);
+let attempts = 0;
+let watcher = null;
+async function checkUntilReady() {
+  attempts++;
+  try {
+    const result = await audit();
+    if (result.processed || attempts >= 20) {
+      if (watcher) clearInterval(watcher);
+      watcher = null;
+      console.log("[Financeiro MP SETTLEMENT WATCH] encerrado:", JSON.stringify({attempts,processed:Boolean(result.processed)}));
+    }
+  } catch (error) {
+    console.warn("[Financeiro MP SETTLEMENT WATCH] falhou:", error.message);
+    if (attempts >= 20 && watcher) { clearInterval(watcher); watcher = null; }
+  }
+}
+
+const startup = setTimeout(checkUntilReady, 8000);
 startup.unref?.();
+watcher = setInterval(checkUntilReady, 30000);
+watcher.unref?.();
+
 module.exports=router;
