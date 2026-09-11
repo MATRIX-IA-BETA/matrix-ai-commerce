@@ -184,7 +184,10 @@
         return;
       }
 
-      const tokenData = await api('/api/finance/open-finance/connect-token', {method:'POST', body:'{}'});
+      const tokenData = await api('/api/finance/open-finance/connect-token', {
+        method:'POST',
+        body: JSON.stringify(updateItemId ? {itemId:String(updateItemId)} : {})
+      });
       await loadSdk();
       if (!window.PluggyConnect) throw new Error('Pluggy Connect não ficou disponível no navegador.');
 

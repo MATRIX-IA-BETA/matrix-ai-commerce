@@ -258,19 +258,43 @@ router.post("/api/finance/open-finance/connect-token", async (req, res) => {
         mensagem: "Faltam PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET no Railway."
       });
     }
+
+    const requestedItemId = String(req.body?.itemId || req.body?.item_id || "").trim();
+    if (requestedItemId) {
+      const { data: knownItems, error: knownError } = await supabase
+        .from("financial_connections")
+        .select("external_connection_id")
+        .eq("provider", "pluggy")
+        .eq("external_connection_id", requestedItemId)
+        .limit(1);
+      if (knownError) throw new Error(`Erro validando conexão Pluggy: ${knownError.message}`);
+      if (!knownItems?.length) {
+        return res.status(404).json({ sucesso: false, mensagem: "Conexão Pluggy não encontrada para atualização." });
+      }
+    }
+
     const key = await getApiKey();
+    const connectTokenBody = {
+      options: {
+        clientUserId: MATRIX_PLUGGY_CLIENT_USER_ID,
+        avoidDuplicates: true
+      }
+    };
+    if (requestedItemId) connectTokenBody.itemId = requestedItemId;
+
     const payload = await pluggyRequest("/connect_token", {
       method: "POST",
-      body: JSON.stringify({
-        options: {
-          clientUserId: MATRIX_PLUGGY_CLIENT_USER_ID,
-          avoidDuplicates: true
-        }
-      })
+      body: JSON.stringify(connectTokenBody)
     }, key);
     const accessToken = payload?.accessToken || payload?.connectToken || payload?.token;
     if (!accessToken) throw new Error("A Pluggy não devolveu o Connect Token.");
-    res.json({ sucesso: true, accessToken, provider: "pluggy", mode: "read_only" });
+    res.json({
+      sucesso: true,
+      accessToken,
+      provider: "pluggy",
+      mode: requestedItemId ? "update" : "read_only",
+      itemId: requestedItemId || null
+    });
   } catch (error) {
     res.status(error.httpStatus || 500).json({ sucesso: false, mensagem: error.message });
   }
