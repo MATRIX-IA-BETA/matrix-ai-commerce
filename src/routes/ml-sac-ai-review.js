@@ -28,4 +28,6 @@ router.post("/api/sac/ml/ai/:packId/learn", async (req, res) => {
   }
 });
 
+router.use(require("./claims-ai"));
+
 module.exports = router;
