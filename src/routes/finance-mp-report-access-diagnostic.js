@@ -15,15 +15,93 @@ async function getAccount() {
   return data;
 }
 
-async function raw(path, account) {
+async function raw(path, account, accept = "application/json") {
   const response = await fetch(`${BASE}${path}`, {
-    headers: { Accept: "application/json", Authorization: `Bearer ${account.access_token}` },
-    signal: AbortSignal.timeout(15000)
+    headers: { Accept: accept, Authorization: `Bearer ${account.access_token}` },
+    signal: AbortSignal.timeout(20000)
   });
   const text = await response.text();
   let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
-  return { response, data };
+  if (accept.includes("json")) {
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  }
+  return { response, data, text };
+}
+
+function parseCsvLine(line, separator = ",") {
+  const values = [];
+  let current = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') { current += '"'; i += 1; }
+      else quoted = !quoted;
+      continue;
+    }
+    if (char === separator && !quoted) {
+      values.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  values.push(current);
+  return values;
+}
+
+function parseMoney(value) {
+  const n = Number(String(value ?? "").trim().replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function analyzeReleaseCsv(text, separator = ",") {
+  const lines = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return { rows: 0, error: "CSV vazio" };
+  const headers = parseCsvLine(lines[0], separator).map(v => v.trim());
+  const index = Object.fromEntries(headers.map((h, i) => [h, i]));
+  const required = ["RECORD_TYPE", "NET_CREDIT_AMOUNT", "NET_DEBIT_AMOUNT"];
+  if (required.some(k => index[k] == null)) return { rows: 0, error: `Colunas ausentes: ${required.filter(k => index[k] == null).join(", ")}` };
+
+  const types = {};
+  let initial = 0;
+  let releaseDelta = 0;
+  let allOperationalDelta = 0;
+  let lastAvailable = null;
+
+  for (let lineNo = 1; lineNo < lines.length; lineNo++) {
+    const values = parseCsvLine(lines[lineNo], separator);
+    const type = String(values[index.RECORD_TYPE] || "").trim().toLowerCase();
+    const credit = parseMoney(values[index.NET_CREDIT_AMOUNT]);
+    const debit = parseMoney(values[index.NET_DEBIT_AMOUNT]);
+    const delta = credit - debit;
+    types[type || "empty"] = (types[type || "empty"] || 0) + 1;
+
+    if (type === "initial_available_balance") initial += delta;
+    if (type === "release") releaseDelta += delta;
+    if (!["total", "available_balance", "initial_available_balance"].includes(type)) allOperationalDelta += delta;
+
+    if (type === "available_balance") {
+      lastAvailable = {
+        date: index.DATE != null ? values[index.DATE] || null : null,
+        description: index.DESCRIPTION != null ? values[index.DESCRIPTION] || null : null,
+        credit: Number(credit.toFixed(2)),
+        debit: Number(debit.toFixed(2)),
+        delta: Number(delta.toFixed(2))
+      };
+    }
+  }
+
+  return {
+    rows: lines.length - 1,
+    types,
+    initial_available_balance: Number(initial.toFixed(2)),
+    release_delta: Number(releaseDelta.toFixed(2)),
+    candidate_initial_plus_release: Number((initial + releaseDelta).toFixed(2)),
+    operational_delta: Number(allOperationalDelta.toFixed(2)),
+    candidate_initial_plus_operational: Number((initial + allOperationalDelta).toFixed(2)),
+    last_available_balance_row: lastAvailable
+  };
 }
 
 async function runProbe() {
@@ -57,13 +135,27 @@ async function runProbe() {
       }))
     : [];
 
+  let csvAnalysis = null;
+  const downloadable = reports.find(r => r.file_name && String(r.format || "CSV").toUpperCase() === "CSV");
+  if (downloadable) {
+    const download = await raw(`/v1/account/release_report/${encodeURIComponent(downloadable.file_name)}`, account, "text/csv");
+    csvAnalysis = {
+      http: download.response.status,
+      file_name: downloadable.file_name,
+      begin_date: downloadable.begin_date,
+      end_date: downloadable.end_date,
+      ...(download.response.ok ? analyzeReleaseCsv(download.text, config?.separator || ",") : {})
+    };
+  }
+
   const result = {
     config_http: configResult.response.status,
     list_http: listResult.response.status,
     config,
-    reports
+    reports,
+    csv_analysis: csvAnalysis
   };
-  console.log("[MP Release Report Metadata]", JSON.stringify(result));
+  console.log("[MP Release Report Analysis]", JSON.stringify(result));
   return result;
 }
 
@@ -72,7 +164,7 @@ router.get("/api/finance/mercadopago/reports/access", async (req, res) => {
   catch (error) { res.status(500).json({ sucesso: false, mensagem: error.message }); }
 });
 
-const startup = setTimeout(() => runProbe().catch(error => console.warn("[MP Release Report Metadata] probe:", error.message)), 9000);
+const startup = setTimeout(() => runProbe().catch(error => console.warn("[MP Release Report Analysis] probe:", error.message)), 9000);
 startup.unref?.();
 
 module.exports = router;
