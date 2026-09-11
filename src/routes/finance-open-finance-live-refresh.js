@@ -181,32 +181,33 @@ async function updateConnection(itemId, item, refreshInfo) {
 async function refreshAndSync(itemId) {
   const refreshInfo = await triggerRefresh(itemId);
   const item = await waitRefresh(itemId);
+  const institution = item?.connector?.name || "Instituição financeira";
+
+  // O saldo do Mercado Pago passou a vir do Relatório de Liberações oficial.
+  // Mesmo que a conexão antiga continue existindo na Pluggy, ela nunca mais
+  // grava saldo na Matrix nem consegue sobrescrever a fonte direta do MP.
+  if (/mercado pago/i.test(String(institution))) {
+    return {
+      item_id: String(itemId),
+      institution,
+      item_status: itemStatus(item),
+      skipped: true,
+      reason: "mercadopago_uses_release_report",
+      accounts: []
+    };
+  }
+
   const accounts = await loadAccounts(itemId);
   const saved = await saveAccounts(itemId, item || {}, accounts);
   await updateConnection(itemId, item || {}, refreshInfo);
   return {
     item_id: String(itemId),
-    institution: item?.connector?.name || "Instituição financeira",
+    institution,
     item_status: itemStatus(item),
     refresh_triggered: refreshInfo.triggered,
     refresh_detail: refreshInfo.detail,
     accounts: saved
   };
-}
-
-async function directMercadoPagoEnabled() {
-  const { data, error } = await supabase
-    .from("financial_accounts")
-    .select("id")
-    .eq("active", true)
-    .eq("include_in_total", true)
-    .contains("metadata", {
-      matrix_key: "mp_available_balance",
-      balance_source: "mercadopago_api_direct"
-    })
-    .limit(1);
-  if (error) throw new Error(error.message);
-  return Boolean(data?.length);
 }
 
 async function allConnections() {
@@ -217,13 +218,9 @@ async function allConnections() {
     .not("external_connection_id", "is", null);
   if (error) throw new Error(error.message);
 
-  const rows = data || [];
-  if (!(await directMercadoPagoEnabled())) return rows;
-
-  // Com a API direta do Mercado Pago ativa, a Pluggy continua responsável
-  // apenas pelos demais bancos (Cora hoje). Assim ela nunca sobrescreve o
-  // saldo disponível do MP com um valor atrasado/cacheado.
-  return rows.filter(connection => !/mercado pago/i.test(String(connection.institution_name || "")));
+  // Pluggy fica responsável apenas pelos demais bancos (Cora hoje). O Mercado
+  // Pago usa exclusivamente a API oficial de Relatório de Liberações.
+  return (data || []).filter(connection => !/mercado pago/i.test(String(connection.institution_name || "")));
 }
 
 function recentlyForced(connection) {
@@ -237,8 +234,6 @@ router.post("/api/finance/open-finance/sync", async (req, res) => {
     const connections = await allConnections();
     const results = [];
 
-    // Atualiza instituição por instituição. Quando o saldo direto do Mercado
-    // Pago estiver validado, esta lista contém Cora e futuros bancos, mas não MP.
     for (const connection of connections) {
       try {
         results.push({ sucesso: true, ...(await refreshAndSync(connection.external_connection_id)) });
@@ -258,9 +253,6 @@ router.post("/api/finance/open-finance/sync", async (req, res) => {
   }
 });
 
-// Na inicialização, atualiza apenas as conexões que continuam dependendo da
-// Pluggy. O Mercado Pago deixa de ser consultado aqui depois que a API direta
-// comprovar e gravar um saldo válido.
 const startup = setTimeout(async () => {
   try {
     if (!configured()) return;
