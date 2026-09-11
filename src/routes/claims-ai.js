@@ -6,4 +6,5 @@ router.post('/api/claims-ai-suggest',async(req,res)=>{
 });
 router.use(require('./sales-center'));
 router.use(require('./manual-sale-nfe'));
+router.use(require('./sales-center-list'));
 module.exports=router;
