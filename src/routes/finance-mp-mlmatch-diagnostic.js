@@ -1,11 +1,10 @@
 const router = require("express").Router();
-const { supabase } = require("../db/supabase");
 const { getMercadoPagoAccount, mpRequest } = require("./finance-mp-release-report");
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const n = v => Number.isFinite(Number(v)) ? Number(v) : 0;
 const money = v => Number(n(v).toFixed(2));
-const SNAPSHOT_AT = new Date("2026-09-11T00:29:00.000Z"); // print 10/09 21:29 -03
+const SNAPSHOT_AT = new Date("2026-09-11T00:29:00.000Z");
 
 function netValue(p) {
   const exact = Number(p?.transaction_details?.net_received_amount);
@@ -18,150 +17,99 @@ function netValue(p) {
   return money(Math.max(0, gross - refunded - fees));
 }
 
-async function searchByReleaseWindow(account, begin, end, status = null) {
-  const limit = 100;
+async function search(account) {
+  const end = new Date(SNAPSHOT_AT.getTime() + 180 * 86400000);
   const collectorId = String(account.user_id || account.account_id || "");
+  const rows = [];
   let offset = 0;
   let total = null;
-  const rows = [];
-
   while (offset < 5000) {
-    const params = {
+    const q = new URLSearchParams({
       sort: "money_release_date",
       criteria: "asc",
       range: "money_release_date",
-      begin_date: begin.toISOString(),
+      begin_date: SNAPSHOT_AT.toISOString(),
       end_date: end.toISOString(),
       "collector.id": collectorId,
-      limit: String(limit),
+      limit: "100",
       offset: String(offset)
-    };
-    if (status) params.status = status;
-    const q = new URLSearchParams(params);
+    });
     const { response, data } = await mpRequest(`/v1/payments/search?${q}`, account);
     if (!response.ok) throw new Error(`Payments HTTP ${response.status}: ${data?.message || data?.error || "erro"}`);
     const page = Array.isArray(data?.results) ? data.results : [];
     rows.push(...page);
     total = Number(data?.paging?.total ?? total);
     offset += page.length;
-    if (!page.length || page.length < limit || (Number.isFinite(total) && offset >= total)) break;
+    if (!page.length || page.length < 100 || (Number.isFinite(total) && offset >= total)) break;
     await sleep(180);
   }
-  return rows;
-}
-
-async function futureReceivables(account) {
-  const now = new Date();
-  const end = new Date(now.getTime() + 180 * 86400000);
-  const rows = await searchByReleaseWindow(account, now, end, "approved");
   return rows.filter(p => {
-    const release = String(p?.money_release_status || "").toLowerCase();
-    const ts = new Date(p?.money_release_date || 0).getTime();
-    return release === "pending" && Number.isFinite(ts) && ts > now.getTime();
+    const created = new Date(p?.date_created || 0).getTime();
+    const approved = new Date(p?.date_approved || p?.date_created || 0).getTime();
+    const release = new Date(p?.money_release_date || 0).getTime();
+    return Number.isFinite(created) && created <= SNAPSHOT_AT.getTime() &&
+      Number.isFinite(approved) && approved <= SNAPSHOT_AT.getTime() &&
+      Number.isFinite(release) && release > SNAPSHOT_AT.getTime();
   });
 }
 
-async function snapshotReceivables(account) {
-  const end = new Date(SNAPSHOT_AT.getTime() + 180 * 86400000);
-  const rows = await searchByReleaseWindow(account, SNAPSHOT_AT, end, null);
-  return rows.filter(p => {
-    const status = String(p?.status || "").toLowerCase();
-    const approvedAt = new Date(p?.date_approved || p?.date_created || 0).getTime();
-    const releaseAt = new Date(p?.money_release_date || 0).getTime();
-    return status === "approved" &&
-      Number.isFinite(approvedAt) && approvedAt <= SNAPSHOT_AT.getTime() &&
-      Number.isFinite(releaseAt) && releaseAt > SNAPSHOT_AT.getTime();
-  });
-}
-
-function orderIdOf(p) {
-  const raw = p?.order?.id ?? p?.order_id ?? p?.external_reference ?? null;
-  return raw == null ? null : String(raw);
-}
-
-async function matrixOrderIds(ids) {
-  const found = new Set();
-  const unique = [...new Set(ids.filter(Boolean))];
-  for (let i = 0; i < unique.length; i += 100) {
-    const { data, error } = await supabase
-      .from("marketplace_orders")
-      .select("marketplace_order_id")
-      .eq("marketplace", "mercadolivre")
-      .in("marketplace_order_id", unique.slice(i, i + 100));
-    if (error) throw new Error(error.message);
-    for (const row of data || []) found.add(String(row.marketplace_order_id));
+function group(rows, keyFn) {
+  const out = {};
+  for (const p of rows) {
+    const key = String(keyFn(p) ?? "missing").toLowerCase();
+    if (!out[key]) out[key] = { count: 0, net: 0, gross: 0 };
+    out[key].count++;
+    out[key].net += netValue(p);
+    out[key].gross += n(p?.transaction_amount);
   }
-  return found;
+  for (const x of Object.values(out)) {
+    x.net = money(x.net);
+    x.gross = money(x.gross);
+  }
+  return out;
 }
 
-function summarize(rows) {
-  return {
-    count: rows.length,
-    net: money(rows.reduce((sum, p) => sum + netValue(p), 0))
-  };
+function summary(rows) {
+  return { count: rows.length, net: money(rows.reduce((s,p)=>s+netValue(p),0)), gross: money(rows.reduce((s,p)=>s+n(p?.transaction_amount),0)) };
 }
 
 async function audit() {
   const account = await getMercadoPagoAccount();
   if (!account?.access_token) throw new Error("Mercado Pago não conectado.");
-  const [rows, snapshotRows] = await Promise.all([
-    futureReceivables(account),
-    snapshotReceivables(account)
-  ]);
-  const ids = rows.map(orderIdOf).filter(Boolean);
-  const found = await matrixOrderIds(ids);
-
-  const matched = [];
-  const unmatched = [];
-  for (const p of rows) {
-    const oid = orderIdOf(p);
-    const item = {
+  const rows = await search(account);
+  const nonApproved = rows.filter(p => String(p?.status || "").toLowerCase() !== "approved");
+  const result = {
+    snapshot_at: SNAPSHOT_AT.toISOString(),
+    collector_id: String(account.user_id || account.account_id || ""),
+    all_future_release_rows: summary(rows),
+    by_status: group(rows, p => p?.status),
+    by_release_status: group(rows, p => p?.money_release_status),
+    by_status_and_release: group(rows, p => `${p?.status || "missing"}|${p?.money_release_status || "missing"}`),
+    by_operation: group(rows, p => p?.operation_type),
+    by_status_detail: group(rows, p => p?.status_detail),
+    non_approved_rows: nonApproved.map(p => ({
       id: p?.id,
-      order_id: oid,
+      status: p?.status || null,
+      status_detail: p?.status_detail || null,
+      release_status: p?.money_release_status || null,
       net: netValue(p),
       gross: money(p?.transaction_amount),
-      status: p?.status || null,
-      release_status: p?.money_release_status || null,
-      operation: p?.operation_type || null,
-      poi: p?.point_of_interaction?.type || p?.point_of_interaction?.business_info?.sub_unit || null,
-      description: String(p?.description || "").slice(0, 100),
-      external_reference: p?.external_reference || null,
+      order_id: p?.order?.id || p?.order_id || null,
+      description: String(p?.description || "").slice(0,100),
       date_approved: p?.date_approved || null,
       release_date: p?.money_release_date || null
-    };
-    if (oid && found.has(oid)) matched.push(item);
-    else unmatched.push(item);
-  }
-
-  const snapshotResult = summarize(snapshotRows);
-  const snapshotReleasedSince = snapshotRows.filter(p =>
-    new Date(p?.money_release_date || 0).getTime() <= Date.now()
-  );
-  const currentApprovedAfterSnapshot = rows.filter(p =>
-    new Date(p?.date_approved || p?.date_created || 0).getTime() > SNAPSHOT_AT.getTime()
-  );
-
-  const result = {
-    collector_id: String(account.user_id || account.account_id || ""),
-    current: summarize(rows),
-    snapshot_at: SNAPSHOT_AT.toISOString(),
-    reconstructed_snapshot: snapshotResult,
-    released_since_snapshot: summarize(snapshotReleasedSince),
-    current_receivables_approved_after_snapshot: summarize(currentApprovedAfterSnapshot),
-    matched_ml_orders: { count: matched.length, net: money(matched.reduce((s, x) => s + x.net, 0)) },
-    unmatched: { count: unmatched.length, net: money(unmatched.reduce((s, x) => s + x.net, 0)) },
-    unmatched_rows: unmatched
+    }))
   };
-  console.log("[Financeiro MP SNAPSHOT AUDIT]", JSON.stringify(result));
+  console.log("[Financeiro MP SNAPSHOT STATUS AUDIT]", JSON.stringify(result));
   return result;
 }
 
-router.get("/api/finance/mercadopago/ml-match-diagnostic", async (req, res) => {
-  try { res.json({ sucesso: true, ...(await audit()) }); }
-  catch (error) { res.status(502).json({ sucesso: false, mensagem: error.message }); }
+router.get("/api/finance/mercadopago/ml-match-diagnostic", async (req,res)=>{
+  try { res.json({ sucesso:true, ...(await audit()) }); }
+  catch (error) { res.status(502).json({ sucesso:false, mensagem:error.message }); }
 });
 
-const startup = setTimeout(() => audit().catch(error => console.warn("[Financeiro MP SNAPSHOT AUDIT] falhou:", error.message)), 18000);
+const startup = setTimeout(()=>audit().catch(error=>console.warn("[Financeiro MP SNAPSHOT STATUS AUDIT] falhou:", error.message)),18000);
 startup.unref?.();
 
 module.exports = router;
