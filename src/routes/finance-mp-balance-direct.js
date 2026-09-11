@@ -298,6 +298,7 @@ async function saveDirectBalance(account, report, analysis) {
     matrix_key: MATRIX_KEY,
     institution: "Mercado Pago Empresas",
     balance_source: "mercadopago_release_report",
+    balance_provider: "mercadopago_api",
     available_balance: analysis.available_balance,
     initial_available_balance: analysis.initial_available_balance,
     release_delta: analysis.release_delta,
@@ -314,7 +315,10 @@ async function saveDirectBalance(account, report, analysis) {
     name: "Mercado Pago Empresas",
     account_type: "asset",
     category: "Banco",
-    source: "mercadopago",
+    // Mantemos a origem estrutural antiga quando o card já existia para não
+    // quebrar a tela de saldos por banco. A fonte real do valor está registrada
+    // em metadata.balance_source e é exclusivamente a API do Mercado Pago.
+    source: existing?.source || "mercadopago",
     current_balance: analysis.available_balance,
     include_in_total: true,
     active: true,
@@ -379,9 +383,6 @@ async function sync(force = false) {
   return syncInFlight;
 }
 
-// O botão Atualizar do Financeiro passa por esta rota. O middleware atualiza
-// primeiro o saldo disponível do Mercado Pago e depois deixa o sincronismo de
-// valores a receber/retidos seguir normalmente.
 router.post("/api/finance/mercadolivre/sync", async (req, res, next) => {
   try { await sync(true); }
   catch (error) { console.warn("[Mercado Pago Saldo Relatório] pré-sync ML:", error.message); }
