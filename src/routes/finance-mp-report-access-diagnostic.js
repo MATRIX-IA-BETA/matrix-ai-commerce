@@ -15,7 +15,7 @@ async function getAccount() {
   return data;
 }
 
-async function probe(path, account) {
+async function raw(path, account) {
   const response = await fetch(`${BASE}${path}`, {
     headers: { Accept: "application/json", Authorization: `Bearer ${account.access_token}` },
     signal: AbortSignal.timeout(15000)
@@ -23,33 +23,56 @@ async function probe(path, account) {
   const text = await response.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
-  return {
-    path,
-    status: response.status,
-    ok: response.ok,
-    count: Array.isArray(data) ? data.length : null,
-    keys: data && !Array.isArray(data) && typeof data === "object" ? Object.keys(data).slice(0, 20) : [],
-    statuses: Array.isArray(data) ? [...new Set(data.slice(0, 50).map(row => row?.status).filter(Boolean))] : []
-  };
+  return { response, data };
 }
 
 async function runProbe() {
   const account = await getAccount();
-  const results = [];
-  for (const path of ["/v1/account/release_report/config", "/v1/account/release_report/list"]) {
-    try { results.push(await probe(path, account)); }
-    catch (error) { results.push({ path, status: 0, ok: false, error: error.message }); }
-  }
-  console.log("[MP Release Report Access]", JSON.stringify(results));
-  return results;
+  const configResult = await raw("/v1/account/release_report/config", account);
+  const listResult = await raw("/v1/account/release_report/list", account);
+
+  const config = configResult.response.ok && configResult.data && typeof configResult.data === "object"
+    ? {
+        file_name_prefix: configResult.data.file_name_prefix || null,
+        display_timezone: configResult.data.display_timezone || null,
+        separator: configResult.data.separator || null,
+        frequency: configResult.data.frequency || null,
+        scheduled: configResult.data.scheduled ?? null,
+        columns: Array.isArray(configResult.data.columns) ? configResult.data.columns : []
+      }
+    : null;
+
+  const reports = Array.isArray(listResult.data)
+    ? listResult.data.slice(0, 10).map(row => ({
+        id: row?.id || null,
+        report_id: row?.report_id || null,
+        status: row?.status || null,
+        file_name: row?.file_name || null,
+        begin_date: row?.begin_date || null,
+        end_date: row?.end_date || null,
+        generation_date: row?.generation_date || null,
+        last_modified: row?.last_modified || null,
+        format: row?.format || null,
+        created_from: row?.created_from || null
+      }))
+    : [];
+
+  const result = {
+    config_http: configResult.response.status,
+    list_http: listResult.response.status,
+    config,
+    reports
+  };
+  console.log("[MP Release Report Metadata]", JSON.stringify(result));
+  return result;
 }
 
 router.get("/api/finance/mercadopago/reports/access", async (req, res) => {
-  try { res.json({ sucesso: true, resultados: await runProbe() }); }
+  try { res.json({ sucesso: true, ...(await runProbe()) }); }
   catch (error) { res.status(500).json({ sucesso: false, mensagem: error.message }); }
 });
 
-const startup = setTimeout(() => runProbe().catch(error => console.warn("[MP Release Report Access] probe:", error.message)), 9000);
+const startup = setTimeout(() => runProbe().catch(error => console.warn("[MP Release Report Metadata] probe:", error.message)), 9000);
 startup.unref?.();
 
 module.exports = router;
