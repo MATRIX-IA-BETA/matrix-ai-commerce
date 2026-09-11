@@ -165,7 +165,14 @@
     return api('/api/finance/open-finance/sync', {method:'POST', body:'{}'});
   }
 
-  async function connectBank(){
+  function requiresUserAction(result){
+    const status = String(result?.item_status || '').toUpperCase();
+    const message = String(result?.mensagem || result?.refresh_detail || '');
+    return ['WAITING_USER_ACTION','WAITING_USER_INPUT','LOGIN_ERROR','INVALID_CREDENTIALS'].includes(status) ||
+      /WAITING_USER_ACTION|WAITING_USER_INPUT|INVALID_CREDENTIALS|MFA/i.test(message);
+  }
+
+  async function connectBank(updateItemId = null, institutionName = null){
     const btn = $('bankBtn');
     if (!btn) return;
     try {
@@ -181,14 +188,14 @@
       await loadSdk();
       if (!window.PluggyConnect) throw new Error('Pluggy Connect não ficou disponível no navegador.');
 
-      const pluggy = new window.PluggyConnect({
+      const options = {
         connectToken: tokenData.accessToken,
         includeSandbox: false,
         countries: ['BR'],
         language: 'pt',
         onSuccess: async (payload) => {
           try {
-            const itemId = payload?.item?.id || payload?.id || payload?.itemId;
+            const itemId = payload?.item?.id || payload?.id || payload?.itemId || updateItemId;
             if (!itemId) throw new Error('A conexão foi autorizada, mas a Pluggy não retornou o itemId.');
             const result = await api('/api/finance/open-finance/connected', {
               method:'POST',
@@ -196,9 +203,15 @@
             });
             await refreshStatus();
             const info = result?.resultado || {};
-            alert(`${info.institution || 'Banco'} conectado. ${info.saved || info.accounts || 0} conta(s) importada(s) para o Financeiro.`);
+            const label = institutionName || info.institution || 'Banco';
+            alert(updateItemId
+              ? `${label} atualizado. O saldo novo já foi importado para o Financeiro.`
+              : `${label} conectado. ${info.saved || info.accounts || 0} conta(s) importada(s) para o Financeiro.`);
             const refresh = $('refreshBtn');
-            if (refresh) refresh.click();
+            if (refresh) {
+              bypassRefresh = true;
+              refresh.click();
+            }
           } catch (error) {
             alert('Banco autorizado, mas houve erro ao importar os saldos: ' + error.message);
           }
@@ -207,7 +220,11 @@
           const message = error?.message || error?.data?.message || 'Falha na conexão bancária.';
           alert('Open Finance: ' + message);
         }
-      });
+      };
+
+      if (updateItemId) options.updateItem = String(updateItemId);
+
+      const pluggy = new window.PluggyConnect(options);
       pluggy.init();
     } catch (error) {
       alert('Open Finance: ' + error.message);
@@ -228,18 +245,26 @@
     event.stopImmediatePropagation();
     const btn = $('refreshBtn');
     const oldText = btn?.textContent;
+    let pendingUpdate = null;
     try {
       if (btn) { btn.disabled = true; btn.textContent = 'Sincronizando bancos...'; }
-      await syncConnections();
+      const syncResult = await syncConnections();
+      pendingUpdate = (syncResult?.resultados || []).find(requiresUserAction) || null;
       await sleep(100);
     } catch (error) {
       console.warn('[Open Finance] sincronização:', error.message);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText || 'Atualizar dados'; }
-      bypassRefresh = true;
-      btn?.click();
-      refreshStatus();
     }
+
+    if (pendingUpdate?.item_id) {
+      await connectBank(pendingUpdate.item_id, pendingUpdate.institution || 'Banco');
+      return;
+    }
+
+    bypassRefresh = true;
+    btn?.click();
+    refreshStatus();
   }
 
   function bind(){
