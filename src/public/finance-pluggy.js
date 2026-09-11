@@ -8,7 +8,7 @@
   function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
   function esc(value){
     return String(value ?? '').replace(/[&<>"']/g, char => ({
-      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'
     }[char]));
   }
   function brl(value){
@@ -184,7 +184,10 @@
         return;
       }
 
-      const tokenData = await api('/api/finance/open-finance/connect-token', {method:'POST', body:'{}'});
+      const tokenData = await api('/api/finance/open-finance/connect-token', {
+        method:'POST',
+        body: JSON.stringify(updateItemId ? {itemId:String(updateItemId)} : {})
+      });
       await loadSdk();
       if (!window.PluggyConnect) throw new Error('Pluggy Connect não ficou disponível no navegador.');
 
