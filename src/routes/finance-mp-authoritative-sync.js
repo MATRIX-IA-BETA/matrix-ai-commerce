@@ -106,8 +106,6 @@ async function pagedSearch(account, params, label, maxRows = 5000) {
 }
 
 async function searchReceivable(account, now) {
-  // O painel do Mercado Pago chama de “A receber” o dinheiro de pagamentos
-  // aprovados cuja data de liberação ainda está no futuro.
   const end = new Date(now.getTime() + 180 * 86400000);
   try {
     const rows = await pagedSearch(account, {
@@ -143,10 +141,8 @@ async function searchReceivable(account, now) {
 }
 
 async function searchHeld(account, now) {
-  // Pagamentos em mediação são os valores que o Mercado Pago efetivamente
-  // retirou da disponibilidade enquanto uma reclamação/disputa está aberta.
   const begin = new Date(now.getTime() - 365 * 86400000);
-  return pagedSearch(account, {
+  const rows = await pagedSearch(account, {
     sort: "date_created",
     criteria: "desc",
     range: "date_created",
@@ -154,6 +150,21 @@ async function searchHeld(account, now) {
     end_date: now.toISOString(),
     status: "in_mediation"
   }, "Retidos em mediação Mercado Pago");
+
+  const breakdown = {};
+  for (const p of rows) {
+    const release = String(p?.money_release_status || "missing").toLowerCase();
+    if (!breakdown[release]) breakdown[release] = { count: 0, net: 0 };
+    breakdown[release].count++;
+    breakdown[release].net += netValue(p).value;
+  }
+  for (const value of Object.values(breakdown)) value.net = money(value.net);
+  console.log("[Financeiro MP] mediações por liberação:", breakdown);
+
+  // “Retido” é mediação cujo dinheiro ainda continua bloqueado. Pagamento em
+  // mediação com money_release_status=released permanece no histórico da disputa,
+  // mas já não compõe o saldo Retido mostrado no Mercado Pago.
+  return rows.filter(p => String(p?.money_release_status || "").toLowerCase() === "pending");
 }
 
 function sumNet(rows) {
@@ -235,7 +246,7 @@ async function runSync() {
     "Mercado Livre — Retido em reclamações",
     "Mercado Livre retido em reclamações",
     held.total,
-    { ...common, component: "claims_held", definition: "payment_status_in_mediation" }
+    { ...common, component: "claims_held", definition: "in_mediation+release_pending" }
   );
 
   lastSyncAt = Date.now();
