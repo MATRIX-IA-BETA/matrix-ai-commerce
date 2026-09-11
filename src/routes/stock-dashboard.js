@@ -36,6 +36,10 @@ router.get("/stock/movements", async (req, res) => {
   }
 });
 
+// O SIC já possui líquido recebido e lucro das vendas históricas.
+// Essas rotas entram antes da conciliação Mercado Pago para evitar chamadas
+// desnecessárias e usar o dado já consolidado no ERP legado.
+router.use(require("./sic-sales-financials"));
 router.use(require("./stock-sale-posting"));
 
 module.exports = router;
