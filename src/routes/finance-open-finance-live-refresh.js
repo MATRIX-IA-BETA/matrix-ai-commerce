@@ -194,6 +194,21 @@ async function refreshAndSync(itemId) {
   };
 }
 
+async function directMercadoPagoEnabled() {
+  const { data, error } = await supabase
+    .from("financial_accounts")
+    .select("id")
+    .eq("active", true)
+    .eq("include_in_total", true)
+    .contains("metadata", {
+      matrix_key: "mp_available_balance",
+      balance_source: "mercadopago_api_direct"
+    })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return Boolean(data?.length);
+}
+
 async function allConnections() {
   const { data, error } = await supabase
     .from("financial_connections")
@@ -201,7 +216,14 @@ async function allConnections() {
     .eq("provider", "pluggy")
     .not("external_connection_id", "is", null);
   if (error) throw new Error(error.message);
-  return data || [];
+
+  const rows = data || [];
+  if (!(await directMercadoPagoEnabled())) return rows;
+
+  // Com a API direta do Mercado Pago ativa, a Pluggy continua responsável
+  // apenas pelos demais bancos (Cora hoje). Assim ela nunca sobrescreve o
+  // saldo disponível do MP com um valor atrasado/cacheado.
+  return rows.filter(connection => !/mercado pago/i.test(String(connection.institution_name || "")));
 }
 
 function recentlyForced(connection) {
@@ -215,9 +237,8 @@ router.post("/api/finance/open-finance/sync", async (req, res) => {
     const connections = await allConnections();
     const results = [];
 
-    // Atualiza instituição por instituição. Evita duas execuções concorrentes na
-    // Pluggy e garante que Cora, Mercado Pago e futuras conexões usem o mesmo
-    // fluxo: PATCH do Item -> aguarda conclusão -> lê e grava o saldo novo.
+    // Atualiza instituição por instituição. Quando o saldo direto do Mercado
+    // Pago estiver validado, esta lista contém Cora e futuros bancos, mas não MP.
     for (const connection of connections) {
       try {
         results.push({ sucesso: true, ...(await refreshAndSync(connection.external_connection_id)) });
@@ -237,9 +258,9 @@ router.post("/api/finance/open-finance/sync", async (req, res) => {
   }
 });
 
-// Na inicialização, todas as conexões Pluggy recebem o mesmo tratamento de
-// atualização em tempo real. A trava individual de 55 minutos evita que novos
-// deploys forcem a mesma instituição repetidamente.
+// Na inicialização, atualiza apenas as conexões que continuam dependendo da
+// Pluggy. O Mercado Pago deixa de ser consultado aqui depois que a API direta
+// comprovar e gravar um saldo válido.
 const startup = setTimeout(async () => {
   try {
     if (!configured()) return;
