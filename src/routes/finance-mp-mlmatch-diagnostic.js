@@ -1,52 +1,144 @@
 const router = require("express").Router();
 const { getMercadoPagoAccount, mpRequest } = require("./finance-mp-release-report");
+const { getMercadoLivreAccount, mercadoLivreFetch } = require("../services/mercadolivre");
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-const SNAPSHOT_AT = new Date("2026-09-11T00:29:00.000Z");
-const n = v => Number.isFinite(Number(v)) ? Number(v) : 0;
-const money = v => Number(n(v).toFixed(2));
+const TARGETS = [
+  {
+    claim_id: "5573590736",
+    order_id: "2000018250502448",
+    payment_ids: [175963503433]
+  },
+  {
+    claim_id: "5572889286",
+    order_id: "2000018197785500",
+    payment_ids: [175480687905, 175481616175],
+    return_shipment_id: "47963436618"
+  }
+];
 
-function net(p) {
-  const v = Number(p?.transaction_details?.net_received_amount);
-  if (Number.isFinite(v)) return money(Math.max(0, v));
-  return money(Math.max(0, n(p?.transaction_amount) - n(p?.transaction_amount_refunded)));
+async function readJson(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch { return { raw: text.slice(0, 1500) }; }
 }
 
-async function search(account) {
-  const rows=[]; let offset=0,total=null;
-  const end = new Date(SNAPSHOT_AT.getTime()+180*86400000);
-  while(offset<5000){
-    const q=new URLSearchParams({sort:"money_release_date",criteria:"asc",range:"money_release_date",begin_date:SNAPSHOT_AT.toISOString(),end_date:end.toISOString(),limit:"100",offset:String(offset)});
-    const {response,data}=await mpRequest(`/v1/payments/search?${q}`,account);
-    if(!response.ok) throw new Error(`HTTP ${response.status}: ${data?.message||data?.error||"erro"}`);
-    const page=Array.isArray(data?.results)?data.results:[];
-    rows.push(...page); total=Number(data?.paging?.total??total); offset+=page.length;
-    if(!page.length||page.length<100||(Number.isFinite(total)&&offset>=total)) break;
-    await sleep(180);
+async function mlGet(account, path) {
+  try {
+    const { response } = await mercadoLivreFetch(path, account);
+    const data = await readJson(response);
+    return {
+      http: response.status,
+      ok: response.ok,
+      data: response.ok ? data : { error: data?.message || data?.error || data?.cause || data }
+    };
+  } catch (error) {
+    return { http: 0, ok: false, data: { error: error.message } };
   }
-  return rows.filter(p=>{
-    const approved=new Date(p?.date_approved||p?.date_created||0).getTime();
-    const release=new Date(p?.money_release_date||0).getTime();
-    return String(p?.status||"").toLowerCase()==="approved" && String(p?.money_release_status||"").toLowerCase()==="pending" && approved<=SNAPSHOT_AT.getTime() && release>SNAPSHOT_AT.getTime();
-  });
 }
 
-async function audit(){
-  const account=await getMercadoPagoAccount();
-  const rows=await search(account);
-  const groups={};
-  for(const p of rows){
-    const collector=String(p?.collector?.id??p?.collector_id??"missing");
-    if(!groups[collector]) groups[collector]={count:0,net:0,rows:[]};
-    groups[collector].count++; groups[collector].net+=net(p);
-    if(collector!==String(account.user_id||account.account_id)) groups[collector].rows.push({id:p?.id,net:net(p),gross:money(p?.transaction_amount),order_id:p?.order?.id??p?.order_id??null,description:String(p?.description||"").slice(0,100),poi:p?.point_of_interaction?.type??null,external_reference:p?.external_reference??null});
+function slimPayment(p) {
+  return {
+    id: p?.id ?? null,
+    status: p?.status ?? null,
+    status_detail: p?.status_detail ?? null,
+    operation_type: p?.operation_type ?? null,
+    collector_id: p?.collector?.id ?? p?.collector_id ?? null,
+    order: p?.order ?? null,
+    external_reference: p?.external_reference ?? null,
+    transaction_amount: p?.transaction_amount ?? null,
+    transaction_amount_refunded: p?.transaction_amount_refunded ?? null,
+    net_received_amount: p?.transaction_details?.net_received_amount ?? null,
+    total_paid_amount: p?.transaction_details?.total_paid_amount ?? null,
+    money_release_status: p?.money_release_status ?? null,
+    money_release_date: p?.money_release_date ?? null,
+    date_created: p?.date_created ?? null,
+    date_approved: p?.date_approved ?? null,
+    date_last_updated: p?.date_last_updated ?? p?.date_last_modified ?? null,
+    charges_details: Array.isArray(p?.charges_details)
+      ? p.charges_details.map(c => ({
+          id: c?.id ?? null,
+          name: c?.name ?? null,
+          type: c?.type ?? null,
+          amount: c?.amounts?.original ?? c?.amount ?? null,
+          refunded: c?.amounts?.refunded ?? c?.refunded ?? null,
+          reserve_id: c?.reserve_id ?? null,
+          date_created: c?.date_created ?? null,
+          last_updated: c?.last_updated ?? null
+        }))
+      : []
+  };
+}
+
+async function mpPayment(account, id) {
+  try {
+    const { response, data } = await mpRequest(`/v1/payments/${id}`, account);
+    return response.ok
+      ? { http: response.status, ok: true, data: slimPayment(data) }
+      : { http: response.status, ok: false, data: { error: data?.message || data?.error || data } };
+  } catch (error) {
+    return { http: 0, ok: false, data: { error: error.message } };
   }
-  for(const g of Object.values(groups)) g.net=money(g.net);
-  const result={snapshot_at:SNAPSHOT_AT.toISOString(),target_collector:String(account.user_id||account.account_id),total:{count:rows.length,net:money(rows.reduce((s,p)=>s+net(p),0))},by_collector:groups};
-  console.log("[Financeiro MP COLLECTOR BREAKDOWN]",JSON.stringify(result));
+}
+
+async function inspectTarget(mlAccount, mpAccount, target) {
+  const claim = await mlGet(mlAccount, `/post-purchase/v1/claims/${target.claim_id}`);
+  const detail = await mlGet(mlAccount, `/post-purchase/v1/claims/${target.claim_id}/detail`);
+  const expectedResolutions = await mlGet(mlAccount, `/post-purchase/v1/claims/${target.claim_id}/expected-resolutions`);
+  const resolutions = await mlGet(mlAccount, `/post-purchase/v1/claims/${target.claim_id}/resolutions`);
+  const offers = await mlGet(mlAccount, `/post-purchase/v1/claims/${target.claim_id}/offers`);
+  const returnInfo = await mlGet(mlAccount, `/post-purchase/v2/claims/${target.claim_id}/returns`);
+  const order = await mlGet(mlAccount, `/orders/${target.order_id}`);
+  const payments = [];
+  for (const id of target.payment_ids) payments.push(await mpPayment(mpAccount, id));
+
+  let returnShipment = null;
+  let returnShipmentCosts = null;
+  if (target.return_shipment_id) {
+    returnShipment = await mlGet(mlAccount, `/shipments/${target.return_shipment_id}`);
+    returnShipmentCosts = await mlGet(mlAccount, `/shipments/${target.return_shipment_id}/costs`);
+  }
+
+  return {
+    target,
+    claim,
+    detail,
+    expected_resolutions: expectedResolutions,
+    resolutions,
+    offers,
+    return_info: returnInfo,
+    order,
+    payments,
+    return_shipment: returnShipment,
+    return_shipment_costs: returnShipmentCosts
+  };
+}
+
+async function audit() {
+  const [mlAccount, mpAccount] = await Promise.all([
+    getMercadoLivreAccount(),
+    getMercadoPagoAccount()
+  ]);
+  if (!mlAccount) throw new Error("Mercado Livre não conectado.");
+  if (!mpAccount?.access_token) throw new Error("Mercado Pago não conectado.");
+
+  const rows = [];
+  for (const target of TARGETS) rows.push(await inspectTarget(mlAccount, mpAccount, target));
+
+  const result = {
+    objetivo: "descobrir o bloqueio/valor parcial que explica os R$ 774,29 residuais do A receber",
+    targets: rows
+  };
+  console.log("[Financeiro MP CLAIM RESOLUTION AUDIT]", JSON.stringify(result));
   return result;
 }
 
-router.get("/api/finance/mercadopago/ml-match-diagnostic",async(req,res)=>{try{res.json({sucesso:true,...await audit()})}catch(error){res.status(502).json({sucesso:false,mensagem:error.message})}});
-const startup=setTimeout(()=>audit().catch(e=>console.warn("[Financeiro MP COLLECTOR BREAKDOWN] falhou:",e.message)),18000); startup.unref?.();
-module.exports=router;
+router.get("/api/finance/mercadopago/ml-match-diagnostic", async (req, res) => {
+  try { res.json({ sucesso: true, ...(await audit()) }); }
+  catch (error) { res.status(502).json({ sucesso: false, mensagem: error.message }); }
+});
+
+const startup = setTimeout(() => audit().catch(error => console.warn("[Financeiro MP CLAIM RESOLUTION AUDIT] falhou:", error.message)), 18000);
+startup.unref?.();
+
+module.exports = router;
