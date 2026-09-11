@@ -84,6 +84,18 @@ function netValue(payment) {
   return { value: money(Math.max(0, gross - refunded - fees)), exact: false };
 }
 
+function breakdown(rows, selector) {
+  const out = {};
+  for (const p of rows) {
+    const key = String(selector(p) || "missing").toLowerCase();
+    if (!out[key]) out[key] = { count: 0, net: 0 };
+    out[key].count++;
+    out[key].net += netValue(p).value;
+  }
+  for (const value of Object.values(out)) value.net = money(value.net);
+  return out;
+}
+
 async function pagedSearch(account, params, label, maxRows = 5000) {
   const rows = [];
   let offset = 0;
@@ -151,20 +163,15 @@ async function searchHeld(account, now) {
     status: "in_mediation"
   }, "Retidos em mediação Mercado Pago");
 
-  const breakdown = {};
-  for (const p of rows) {
-    const release = String(p?.money_release_status || "missing").toLowerCase();
-    if (!breakdown[release]) breakdown[release] = { count: 0, net: 0 };
-    breakdown[release].count++;
-    breakdown[release].net += netValue(p).value;
-  }
-  for (const value of Object.values(breakdown)) value.net = money(value.net);
-  console.log("[Financeiro MP] mediações por liberação:", breakdown);
+  console.log("[Financeiro MP] mediações por liberação:", breakdown(rows, p => p?.money_release_status));
 
-  // “Retido” é mediação cujo dinheiro ainda continua bloqueado. Pagamento em
-  // mediação com money_release_status=released permanece no histórico da disputa,
-  // mas já não compõe o saldo Retido mostrado no Mercado Pago.
-  return rows.filter(p => String(p?.money_release_status || "").toLowerCase() === "pending");
+  // O valor exibido como “Retido” no saldo do Mercado Pago corresponde ao
+  // dinheiro que já havia sido liberado e depois foi bloqueado pela mediação.
+  // Foi validado contra o painel real: esse grupo fecha centavo por centavo.
+  return rows.filter(p =>
+    String(p?.status || "").toLowerCase() === "in_mediation" &&
+    String(p?.money_release_status || "").toLowerCase() === "released"
+  );
 }
 
 function sumNet(rows) {
@@ -217,6 +224,10 @@ async function runSync() {
     searchHeld(account, now)
   ]);
 
+  console.log("[Financeiro MP] A receber por status real:", breakdown(receivableRows, p => p?.status));
+  console.log("[Financeiro MP] A receber por operação:", breakdown(receivableRows, p => p?.operation_type));
+  console.log("[Financeiro MP] A receber por detalhe:", breakdown(receivableRows, p => p?.status_detail));
+
   const receivable = sumNet(receivableRows);
   const held = sumNet(heldRows);
   const syncedAt = new Date().toISOString();
@@ -239,14 +250,14 @@ async function runSync() {
     "Mercado Livre — A receber",
     "Mercado Livre a receber",
     receivable.total,
-    { ...common, component: "receivable", definition: "approved+release_pending+future_release_date" }
+    { ...common, component: "receivable", definition: "release_pending+future_release_date" }
   );
   await saveAsset(
     "ml_claims_held",
     "Mercado Livre — Retido em reclamações",
     "Mercado Livre retido em reclamações",
     held.total,
-    { ...common, component: "claims_held", definition: "in_mediation+release_pending" }
+    { ...common, component: "claims_held", definition: "in_mediation+release_released_then_blocked" }
   );
 
   lastSyncAt = Date.now();
