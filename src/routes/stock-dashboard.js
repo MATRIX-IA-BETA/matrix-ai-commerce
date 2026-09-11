@@ -36,4 +36,6 @@ router.get("/stock/movements", async (req, res) => {
   }
 });
 
+router.use(require("./stock-sale-posting"));
+
 module.exports = router;
