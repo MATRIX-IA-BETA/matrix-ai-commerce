@@ -39,7 +39,7 @@
 <script>
 (()=>{
 const $=id=>document.getElementById(id);let products=[],movements=[],movementMode='entry';
-const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});const qty=v=>Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:2});const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));const parseNum=v=>Number(String(v||'0').replace(/\./g,'').replace(',','.'))||0;
+const brl=v=>Number(v||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});const qty=v=>Number(v||0).toLocaleString('pt-BR',{maximumFractionDigits:2});const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));const parseNum=v=>{const s=String(v??'').trim().replace(/\s/g,'');if(!s)return 0;if(s.includes(',')&&s.includes('.'))return Number(s.replace(/\./g,'').replace(',','.'))||0;if(s.includes(','))return Number(s.replace(',','.'))||0;return Number(s)||0};
 async function api(url,opts={}){const r=await fetch(url,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||`Erro HTTP ${r.status}`);return d}
 function showWarning(msg){const e=$('warning');if(!msg){e.classList.remove('show');e.textContent='';return}e.textContent=msg;e.classList.add('show')}
 function setStatus(id,type,msg){const e=$(id);e.className='status show '+type;e.textContent=msg}function clearStatus(id){const e=$(id);e.className='status';e.textContent=''}
