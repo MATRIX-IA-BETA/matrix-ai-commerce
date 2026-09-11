@@ -97,7 +97,7 @@
     try {
       const summary = await api('/api/finance/summary');
       const accounts = (summary.accounts || [])
-        .filter(account => String(account.source || '').toLowerCase() === 'pluggy')
+        .filter(account => ['pluggy','mercadopago'].includes(String(account.source || '').toLowerCase()))
         .filter(account => account.account_type === 'asset')
         .filter(account => /banco|bank|caixa|cash/i.test(String(account.category || '')))
         .sort((a, b) => institutionFor(a).localeCompare(institutionFor(b), 'pt-BR') || String(a.name || '').localeCompare(String(b.name || ''), 'pt-BR'));
@@ -113,14 +113,18 @@
         return;
       }
 
-      count.textContent = accounts.length === 1 ? '1 conta conectada' : `${accounts.length} contas conectadas`;
+      count.textContent = accounts.length === 1 ? '1 conta monitorada' : `${accounts.length} contas monitoradas`;
       grid.innerHTML = accounts.map(account => {
         const bank = institutionFor(account);
         const metadata = account.metadata || {};
+        const source = String(account.source || '').toLowerCase();
         const details = [];
-        if (account.name && String(account.name).trim().toLowerCase() !== String(bank).trim().toLowerCase()) details.push(account.name);
-        if (metadata.masked_number) details.push(`Conta ${metadata.masked_number}`);
-        if (!details.length) details.push('Conta bancária via Open Finance');
+        if (source === 'mercadopago') details.push('Saldo direto · API Mercado Pago');
+        else {
+          if (account.name && String(account.name).trim().toLowerCase() !== String(bank).trim().toLowerCase()) details.push(account.name);
+          if (metadata.masked_number) details.push(`Conta ${metadata.masked_number}`);
+          if (!details.length) details.push('Conta bancária via Open Finance');
+        }
         return `<div class="pluggy-bank-card">
           <div class="pluggy-bank-name"><span class="pluggy-bank-dot"></span>${esc(bank)}</div>
           <strong class="pluggy-bank-balance">${brl(account.current_balance)}</strong>
@@ -129,7 +133,7 @@
       }).join('');
       panel.hidden = false;
     } catch (error) {
-      console.warn('[Open Finance] saldos por banco:', error.message);
+      console.warn('[Financeiro] saldos por banco:', error.message);
     }
   }
 
