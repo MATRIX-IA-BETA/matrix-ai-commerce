@@ -25,6 +25,7 @@ router.get("/stock/movements", async (req, res) => {
   } catch (erro) { res.status(500).json({ sucesso: false, mensagem: erro.message }); }
 });
 
+router.use(require("./stock-kits-management"));
 router.use(require("./marketplace-sale-management").router);
 router.use(require("./marketplace-sale-actions"));
 router.use(require("./sales-center-list"));
