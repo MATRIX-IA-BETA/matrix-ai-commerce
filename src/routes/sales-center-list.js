@@ -1,6 +1,7 @@
 const router=require('express').Router();
 const {supabase}=require('../db/supabase');
 const roi=(profit,cost)=>Number(cost)>0&&profit!=null?Number(((Number(profit)/Number(cost))*100).toFixed(2)):null;
+const profitMargin=(profit,sales)=>Number(sales)>0&&profit!=null?Number(((Number(profit)/Number(sales))*100).toFixed(2)):null;
 const money=v=>Number((Number(v)||0).toFixed(2));
 const startOfDay=v=>v?`${String(v).slice(0,10)}T00:00:00-03:00`:null;
 const endOfDay=v=>v?`${String(v).slice(0,10)}T23:59:59.999-03:00`:null;
@@ -23,7 +24,7 @@ async function periodRows(dateFrom,dateTo,origin=''){
  }
  rows.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));return rows;
 }
-router.get('/sales/period-summary',async(req,res)=>{try{const rows=await periodRows(req.query.date_from,req.query.date_to,String(req.query.origin||''));const active=rows.filter(r=>!['cancelled','voided'].includes(String(r.status||'').toLowerCase()));res.json({sucesso:true,total:active.length,total_vendas:money(active.reduce((s,r)=>s+Number(r.gross_amount||0),0)),total_liquido:money(active.reduce((s,r)=>s+Number(r.net_amount||0),0)),total_lucro:money(active.reduce((s,r)=>s+Number(r.profit||0),0)),lucros_conhecidos:active.filter(r=>r.profit!=null).length})}catch(e){res.status(500).json({sucesso:false,mensagem:e.message})}});
+router.get('/sales/period-summary',async(req,res)=>{try{const rows=await periodRows(req.query.date_from,req.query.date_to,String(req.query.origin||''));const active=rows.filter(r=>!['cancelled','voided'].includes(String(r.status||'').toLowerCase())),known=active.filter(r=>r.profit!=null),totalSales=active.reduce((s,r)=>s+Number(r.gross_amount||0),0),knownSales=known.reduce((s,r)=>s+Number(r.gross_amount||0),0),totalProfit=known.reduce((s,r)=>s+Number(r.profit||0),0);res.json({sucesso:true,total:active.length,total_vendas:money(totalSales),total_liquido:money(active.reduce((s,r)=>s+Number(r.net_amount||0),0)),total_lucro:money(totalProfit),margem_lucro_percent:profitMargin(totalProfit,knownSales),lucros_conhecidos:known.length,vendas_base_margem:money(knownSales)})}catch(e){res.status(500).json({sucesso:false,mensagem:e.message})}});
 router.get('/sales/center',async(req,res)=>{try{
  const limit=Math.min(1000,Math.max(1,Number(req.query.limit)||200)),dateFrom=req.query.date_from||'',dateTo=req.query.date_to||'',origin=String(req.query.origin||'');let rows=[];
  if(dateFrom||dateTo){rows=await periodRows(dateFrom,dateTo,origin);}
