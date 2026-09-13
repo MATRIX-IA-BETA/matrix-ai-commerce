@@ -6,6 +6,7 @@ const AUTO_SYNC_MS = 10 * 60 * 1000;
 const PAGE_SIZE = 100;
 const REQUEST_GAP_MS = 180;
 const MAX_RETRIES = 4;
+const RECEIVABLE_LOOKBACK_DAYS = 180;
 
 let syncInFlight = null;
 let lastSyncAt = 0;
@@ -16,6 +17,7 @@ let lastRequestAt = 0;
 const n = value => Number.isFinite(Number(value)) ? Number(value) : 0;
 const money = value => Number(n(value).toFixed(2));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const finiteOrNull = value => value == null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
 
 async function getMercadoPagoAccount() {
   const { data, error } = await supabase
@@ -73,15 +75,22 @@ async function mpJson(path, account, label) {
 }
 
 function netValue(payment) {
-  const exact = Number(payment?.transaction_details?.net_received_amount);
-  if (Number.isFinite(exact)) return { value: money(Math.max(0, exact)), exact: true };
-
   const gross = Math.max(0, n(payment?.transaction_amount));
   const refunded = Math.max(0, n(payment?.transaction_amount_refunded));
   const fees = (Array.isArray(payment?.fee_details) ? payment.fee_details : [])
     .filter(fee => !fee?.fee_payer || String(fee.fee_payer).toLowerCase() === "collector")
     .reduce((sum, fee) => sum + Math.abs(n(fee?.amount)), 0);
-  return { value: money(Math.max(0, gross - refunded - fees)), exact: false };
+  const exact = Number(payment?.transaction_details?.net_received_amount);
+
+  // O net_received_amount pode permanecer com o valor original enquanto um
+  // reembolso parcial já reduziu o dinheiro efetivamente retido/a liberar.
+  // Nessa situação usamos o valor líquido corrente reconstruído.
+  if (refunded > 0 && gross > 0) {
+    const current = money(Math.max(0, gross - refunded - fees));
+    return { value: current, exact: false, refund_adjusted: true };
+  }
+  if (Number.isFinite(exact)) return { value: money(Math.max(0, exact)), exact: true, refund_adjusted: false };
+  return { value: money(Math.max(0, gross - refunded - fees)), exact: false, refund_adjusted: refunded > 0 };
 }
 
 function breakdown(rows, selector) {
@@ -96,7 +105,7 @@ function breakdown(rows, selector) {
   return out;
 }
 
-function compactReceivableAudit(rows) {
+function compactReceivableAudit(rows, now = new Date()) {
   const sumWhere = predicate => money(rows.filter(predicate).reduce((sum, p) => sum + netValue(p).value, 0));
   const countWhere = predicate => rows.filter(predicate).length;
   const hasOrder = p => Boolean(p?.order?.id || p?.order_id);
@@ -105,6 +114,11 @@ function compactReceivableAudit(rows) {
   const isTransfer = p => String(p?.operation_type || "").toLowerCase() === "money_transfer";
   const marketplace = p => p?.marketplace ?? p?.metadata?.marketplace ?? p?.additional_info?.marketplace ?? "missing";
   const poi = p => p?.point_of_interaction?.type ?? p?.point_of_interaction?.business_info?.sub_unit ?? "missing";
+  const overdue = p => {
+    const release = String(p?.money_release_status || "").toLowerCase();
+    const ts = new Date(p?.money_release_date || 0).getTime();
+    return release === "pending" && Number.isFinite(ts) && ts > 0 && ts <= now.getTime();
+  };
 
   const suspicious = rows
     .filter(p => !isRegular(p) || !hasOrder(p) || !hasItems(p))
@@ -112,6 +126,7 @@ function compactReceivableAudit(rows) {
       id: p?.id,
       net: netValue(p).value,
       gross: money(p?.transaction_amount),
+      refunded: money(p?.transaction_amount_refunded),
       operation: p?.operation_type || null,
       order: p?.order?.id || p?.order_id || null,
       items: Array.isArray(p?.additional_info?.items) ? p.additional_info.items.length : 0,
@@ -127,6 +142,7 @@ function compactReceivableAudit(rows) {
 
   return {
     total: { count: rows.length, net: sumWhere(() => true) },
+    overdue_pending: { count: countWhere(overdue), net: sumWhere(overdue) },
     operation: breakdown(rows, p => p?.operation_type),
     payment_type: breakdown(rows, p => p?.payment_type_id || p?.payment_type),
     marketplace: breakdown(rows, marketplace),
@@ -146,6 +162,22 @@ function compactReceivableAudit(rows) {
     point_of_interaction: breakdown(rows, poi),
     suspicious
   };
+}
+
+function compactHeldAudit(rows) {
+  return rows.map(p => {
+    const net = netValue(p);
+    return {
+      id: p?.id,
+      gross: money(p?.transaction_amount),
+      refunded: money(p?.transaction_amount_refunded),
+      net: net.value,
+      refund_adjusted: Boolean(net.refund_adjusted),
+      release_status: p?.money_release_status || null,
+      status: p?.status || null,
+      order: p?.order?.id || p?.order_id || p?.external_reference || null
+    };
+  });
 }
 
 async function pagedSearch(account, params, label, maxRows = 5000) {
@@ -169,39 +201,25 @@ async function pagedSearch(account, params, label, maxRows = 5000) {
   return rows;
 }
 
+function receivablePayment(payment, now) {
+  const release = String(payment?.money_release_status || "").toLowerCase();
+  if (release === "pending") return true;
+  if (release) return false;
+  const ts = new Date(payment?.money_release_date || 0).getTime();
+  return Number.isFinite(ts) && ts > now.getTime();
+}
+
 async function searchReceivable(account, now) {
-  const end = new Date(now.getTime() + 180 * 86400000);
-  try {
-    const rows = await pagedSearch(account, {
-      sort: "money_release_date",
-      criteria: "asc",
-      range: "money_release_date",
-      begin_date: now.toISOString(),
-      end_date: end.toISOString(),
-      status: "approved"
-    }, "A receber Mercado Pago");
-    return rows.filter(p => {
-      const release = String(p?.money_release_status || "").toLowerCase();
-      const ts = new Date(p?.money_release_date || 0).getTime();
-      return release === "pending" && Number.isFinite(ts) && ts > now.getTime();
-    });
-  } catch (error) {
-    console.warn("[Financeiro MP] busca por money_release_date falhou; usando fallback:", error.message);
-    const begin = new Date(now.getTime() - 120 * 86400000);
-    const rows = await pagedSearch(account, {
-      sort: "date_created",
-      criteria: "desc",
-      range: "date_created",
-      begin_date: begin.toISOString(),
-      end_date: now.toISOString(),
-      status: "approved"
-    }, "A receber Mercado Pago fallback");
-    return rows.filter(p => {
-      const release = String(p?.money_release_status || "").toLowerCase();
-      const ts = new Date(p?.money_release_date || 0).getTime();
-      return release === "pending" && Number.isFinite(ts) && ts > now.getTime();
-    });
-  }
+  const begin = new Date(now.getTime() - RECEIVABLE_LOOKBACK_DAYS * 86400000);
+  const rows = await pagedSearch(account, {
+    sort: "date_created",
+    criteria: "desc",
+    range: "date_created",
+    begin_date: begin.toISOString(),
+    end_date: now.toISOString(),
+    status: "approved"
+  }, "A receber Mercado Pago");
+  return rows.filter(p => receivablePayment(p, now));
 }
 
 async function searchHeld(account, now) {
@@ -223,15 +241,37 @@ async function searchHeld(account, now) {
   );
 }
 
+async function directBalance(account) {
+  const userId = String(account.user_id || account.account_id || "").trim();
+  if (!userId) return null;
+  try {
+    const data = await mpJson(
+      `/users/${encodeURIComponent(userId)}/mercadopago_account/balance`,
+      account,
+      "Saldo consolidado Mercado Pago"
+    );
+    return {
+      available_balance: finiteOrNull(data?.available_balance ?? data?.available_amount),
+      unavailable_balance: finiteOrNull(data?.unavailable_balance),
+      total_amount: finiteOrNull(data?.total_amount)
+    };
+  } catch (error) {
+    console.warn("[Financeiro MP] saldo consolidado direto indisponível:", error.message);
+    return null;
+  }
+}
+
 function sumNet(rows) {
   let total = 0;
   let derived = 0;
+  let refundAdjusted = 0;
   for (const payment of rows) {
     const net = netValue(payment);
     total += net.value;
     if (!net.exact) derived++;
+    if (net.refund_adjusted) refundAdjusted++;
   }
-  return { total: money(total), derived };
+  return { total: money(total), derived, refundAdjusted };
 }
 
 async function saveAsset(key, name, category, balance, metadata) {
@@ -268,20 +308,39 @@ async function saveAsset(key, name, category, balance, metadata) {
 async function runSync() {
   const account = await getMercadoPagoAccount();
   const now = new Date();
-  const [receivableRows, heldRows] = await Promise.all([
+  const [receivableRows, heldRows, balance] = await Promise.all([
     searchReceivable(account, now),
-    searchHeld(account, now)
+    searchHeld(account, now),
+    directBalance(account)
   ]);
 
-  const audit = compactReceivableAudit(receivableRows);
+  const audit = compactReceivableAudit(receivableRows, now);
   console.log("[Financeiro MP] RECEIVABLE AUDIT:", JSON.stringify(audit));
+  console.log("[Financeiro MP] HELD AUDIT:", JSON.stringify(compactHeldAudit(heldRows)));
+  if (balance) console.log("[Financeiro MP] BALANCE SNAPSHOT:", balance);
 
-  const receivable = sumNet(receivableRows);
+  const searchedReceivable = sumNet(receivableRows);
   const held = sumNet(heldRows);
+  let receivableTotal = searchedReceivable.total;
+  let receivableDefinition = "approved+release_pending";
+
+  // O endpoint de saldo da própria conta traz o indisponível consolidado.
+  // A interface do Mercado Pago separa esse total entre A receber e Retido.
+  // Portanto, quando disponível, usamos o total oficial menos o retido já
+  // identificado pelas mediações, evitando perder liberações atrasadas.
+  if (
+    balance?.unavailable_balance != null &&
+    balance.unavailable_balance >= 0 &&
+    balance.unavailable_balance + 0.01 >= held.total
+  ) {
+    receivableTotal = money(Math.max(0, balance.unavailable_balance - held.total));
+    receivableDefinition = "direct_unavailable_balance-minus-held";
+  }
+
   const syncedAt = new Date().toISOString();
-  const precision = receivable.derived || held.derived
-    ? "mercadopago_payment_search_net_mixed"
-    : "mercadopago_payment_search_net_exact";
+  const precision = searchedReceivable.derived || held.derived
+    ? "mercadopago_balance_plus_payment_search_mixed"
+    : "mercadopago_balance_plus_payment_search_exact";
 
   const common = {
     synced_at: syncedAt,
@@ -289,33 +348,46 @@ async function runSync() {
     source_precision: precision,
     receivable_payments: receivableRows.length,
     held_payments: heldRows.length,
-    receivable_derived_values: receivable.derived,
-    held_derived_values: held.derived
+    receivable_derived_values: searchedReceivable.derived,
+    held_derived_values: held.derived,
+    receivable_refund_adjusted: searchedReceivable.refundAdjusted,
+    held_refund_adjusted: held.refundAdjusted,
+    direct_available_balance: balance?.available_balance ?? null,
+    direct_unavailable_balance: balance?.unavailable_balance ?? null,
+    direct_total_amount: balance?.total_amount ?? null,
+    receivable_search_total: searchedReceivable.total,
+    overdue_pending_count: audit.overdue_pending.count,
+    overdue_pending_total: audit.overdue_pending.net
   };
 
   await saveAsset(
     "ml_receivable",
     "Mercado Livre — A receber",
     "Mercado Livre a receber",
-    receivable.total,
-    { ...common, component: "receivable", definition: "release_pending+future_release_date" }
+    receivableTotal,
+    { ...common, component: "receivable", definition: receivableDefinition }
   );
   await saveAsset(
     "ml_claims_held",
     "Mercado Livre — Retido em reclamações",
     "Mercado Livre retido em reclamações",
     held.total,
-    { ...common, component: "claims_held", definition: "in_mediation+release_released_then_blocked" }
+    { ...common, component: "claims_held", definition: "in_mediation+release_released+refund_adjusted" }
   );
 
   lastSyncAt = Date.now();
   lastResult = {
-    a_receber: receivable.total,
+    a_receber: receivableTotal,
+    a_receber_busca: searchedReceivable.total,
     retido_reclamacoes: held.total,
-    indisponivel_total: money(receivable.total + held.total),
+    indisponivel_total: money(receivableTotal + held.total),
+    saldo_disponivel: balance?.available_balance ?? null,
+    saldo_indisponivel_api: balance?.unavailable_balance ?? null,
+    saldo_total_api: balance?.total_amount ?? null,
     pagamentos_a_receber: receivableRows.length,
     pagamentos_retidos: heldRows.length,
-    valores_derivados: receivable.derived + held.derived,
+    valores_derivados: searchedReceivable.derived + held.derived,
+    reembolsos_ajustados: searchedReceivable.refundAdjusted + held.refundAdjusted,
     atualizado_em: syncedAt
   };
   console.log("[Financeiro MP Autoritativo] sincronizado:", lastResult);
