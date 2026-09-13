@@ -30,5 +30,6 @@ router.use(require("./marketplace-sale-management").router);
 router.use(require("./marketplace-sale-actions"));
 router.use(require("./sales-center-list"));
 router.use(require("./sic-sales-financials"));
+router.use(require("./fiscal-period"));
 router.use(require("./stock-sale-posting"));
 module.exports = router;
