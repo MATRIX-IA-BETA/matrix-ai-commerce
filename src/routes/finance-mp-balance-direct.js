@@ -63,6 +63,30 @@ async function mpJson(path, account, options = {}, label = "Mercado Pago") {
   return result.data;
 }
 
+function numeric(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function getDirectBalance(account) {
+  const userId = String(account.user_id || account.account_id || "").trim();
+  if (!userId) throw new Error("Conta Mercado Pago sem user_id para consultar saldo.");
+  const data = await mpJson(
+    `/users/${encodeURIComponent(userId)}/mercadopago_account/balance`,
+    account,
+    {},
+    "Saldo direto Mercado Pago"
+  );
+  const available = numeric(data?.available_balance ?? data?.available_amount);
+  if (available == null) throw new Error("Mercado Pago não retornou available_balance.");
+  return {
+    available_balance: Number(Math.max(0, available).toFixed(2)),
+    unavailable_balance: numeric(data?.unavailable_balance),
+    total_amount: numeric(data?.total_amount),
+    raw: data
+  };
+}
+
 function parseCsv(text, separator = ",") {
   const source = String(text || "").replace(/^\uFEFF/, "");
   const rows = [];
@@ -162,16 +186,29 @@ async function getConfig(account) {
   };
 }
 
+function reportGeneratedAt(report) {
+  return new Date(report?.generation_date || report?.last_modified || report?.date_created || 0).getTime();
+}
+
+function isUsableReleaseReport(report) {
+  if (!report?.file_name) return false;
+  if (String(report?.format || "CSV").toUpperCase() !== "CSV") return false;
+  if (report?.is_reserve === true || String(report?.is_reserve).toLowerCase() === "true") return false;
+  if (/^reserve-/i.test(String(report.file_name))) return false;
+  const subtype = String(report?.sub_type || "release").toLowerCase();
+  return !subtype || subtype === "release";
+}
+
 async function listReports(account) {
   const rows = await mpJson("/v1/account/release_report/list", account, {}, "Lista de relatórios");
   return (Array.isArray(rows) ? rows : [])
-    .filter(row => row?.file_name && String(row?.format || "CSV").toUpperCase() === "CSV")
-    .sort((a, b) => new Date(b?.end_date || b?.generation_date || 0) - new Date(a?.end_date || a?.generation_date || 0));
+    .filter(isUsableReleaseReport)
+    .sort((a, b) => reportGeneratedAt(b) - reportGeneratedAt(a));
 }
 
 function reportFresh(report) {
-  const end = new Date(report?.end_date || 0).getTime();
-  return Number.isFinite(end) && end > 0 && Date.now() - end <= REPORT_FRESH_MS;
+  const generated = reportGeneratedAt(report);
+  return Number.isFinite(generated) && generated > 0 && Date.now() - generated >= 0 && Date.now() - generated <= REPORT_FRESH_MS;
 }
 
 async function createReport(account) {
@@ -180,8 +217,6 @@ async function createReport(account) {
   const payload = { begin_date: beginDate, end_date: endDate };
   const query = `?begin_date=${encodeURIComponent(beginDate)}&end_date=${encodeURIComponent(endDate)}`;
 
-  // O MP já respondeu 400 dizendo que não recebeu begin_date mesmo com JSON.
-  // Enviamos nos dois formatos para tolerar a variação do backend sem perder precisão.
   const result = await mpRequest(`/v1/account/release_report${query}`, account, {
     method: "POST",
     body: JSON.stringify(payload)
@@ -206,7 +241,7 @@ async function createReport(account) {
       if (error.httpStatus !== 404) throw error;
     }
 
-    if (status?.file_name) return { ...status, task_id: taskId };
+    if (status?.file_name && isUsableReleaseReport(status)) return { ...status, task_id: taskId };
     const state = String(status?.status || "").toLowerCase();
     if (["failed", "error", "cancelled", "canceled"].includes(state)) {
       throw new Error(`Relatório falhou com status ${state}.`);
@@ -217,8 +252,8 @@ async function createReport(account) {
     if (exact?.file_name) return { ...exact, task_id: taskId };
 
     const near = reports.find(row => {
-      const end = new Date(row?.end_date || 0).getTime();
-      return Number.isFinite(end) && Math.abs(end - new Date(endDate).getTime()) <= 2 * 60 * 1000;
+      const generated = reportGeneratedAt(row);
+      return Number.isFinite(generated) && generated >= new Date(endDate).getTime() - 2 * 60 * 1000;
     });
     if (near?.file_name) return { ...near, task_id: taskId };
   }
@@ -241,7 +276,7 @@ async function downloadAndAnalyze(account, report, separator) {
   return analyzeCsv(result.text, separator);
 }
 
-async function saveBalance(account, report, analysis) {
+async function saveBalance(account, source, analysis, report = null) {
   const now = new Date().toISOString();
   const { data: rows, error } = await supabase
     .from("financial_accounts")
@@ -255,16 +290,19 @@ async function saveBalance(account, report, analysis) {
     ...(existing?.metadata || {}),
     matrix_key: MATRIX_KEY,
     institution: "Mercado Pago Empresas",
-    balance_source: "mercadopago_release_report",
+    balance_source: source,
     balance_provider: "mercadopago_api",
     available_balance: analysis.available_balance,
-    initial_available_balance: analysis.initial_available_balance,
-    movement_delta: analysis.movement_delta,
-    calculation: analysis.calculation,
-    report_file_name: report.file_name || null,
-    report_begin_at: report.begin_date || null,
-    report_end_at: report.end_date || null,
-    report_rows: analysis.rows,
+    unavailable_balance: analysis.unavailable_balance ?? null,
+    total_amount: analysis.total_amount ?? null,
+    initial_available_balance: analysis.initial_available_balance ?? null,
+    movement_delta: analysis.movement_delta ?? null,
+    calculation: analysis.calculation || null,
+    report_file_name: report?.file_name || null,
+    report_begin_at: report?.begin_date || null,
+    report_end_at: report?.end_date || null,
+    report_generation_at: report?.generation_date || report?.last_modified || null,
+    report_rows: analysis.rows ?? null,
     mp_user_id: String(account.user_id || account.account_id || ""),
     pluggy_disabled_for_balance: true,
     last_synced_at: now
@@ -302,18 +340,35 @@ async function saveBalance(account, report, analysis) {
 
 async function runSync() {
   const account = await getAccount();
-  const [config, report] = await Promise.all([getConfig(account), resolveReport(account)]);
-  const analysis = await downloadAndAnalyze(account, report, config.separator);
-  const syncedAt = await saveBalance(account, report, analysis);
+  let analysis;
+  let report = null;
+  let source = "mercadopago_direct_balance";
+  let directError = null;
+
+  try {
+    analysis = await getDirectBalance(account);
+  } catch (error) {
+    directError = error.message;
+    console.warn("[Mercado Pago Saldo Direto] endpoint de saldo indisponível; usando relatório:", error.message);
+    const [config, resolved] = await Promise.all([getConfig(account), resolveReport(account)]);
+    report = resolved;
+    analysis = await downloadAndAnalyze(account, report, config.separator);
+    source = "mercadopago_release_report";
+  }
+
+  const syncedAt = await saveBalance(account, source, analysis, report);
   lastSyncAt = Date.now();
   lastResult = {
     saldo_disponivel: analysis.available_balance,
-    saldo_inicial: analysis.initial_available_balance,
-    variacao: analysis.movement_delta,
-    calculo: analysis.calculation,
-    fonte: "mercadopago_release_report",
-    relatorio: report.file_name || null,
-    fim_relatorio: report.end_date || null,
+    saldo_indisponivel: analysis.unavailable_balance ?? null,
+    saldo_total: analysis.total_amount ?? null,
+    saldo_inicial: analysis.initial_available_balance ?? null,
+    variacao: analysis.movement_delta ?? null,
+    calculo: analysis.calculation || null,
+    fonte: source,
+    relatorio: report?.file_name || null,
+    fim_relatorio: report?.end_date || null,
+    erro_saldo_direto: directError,
     atualizado_em: syncedAt
   };
   console.log("[Mercado Pago Saldo Direto] sincronizado:", lastResult);
