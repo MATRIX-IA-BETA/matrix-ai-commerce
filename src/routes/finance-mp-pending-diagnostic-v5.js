@@ -54,6 +54,7 @@ function ref(p){
 }
 function sum(rows){return money(rows.reduce((s,p)=>s+net(p),0));}
 function bucket(rows){return {count:rows.length,net:sum(rows)};}
+function slim(p){return {id:p.id,order:ref(p),net:net(p),release:p.money_release_date,created:p.date_created,operation:p.operation_type,payment_type:p.payment_type_id,detail:p.status_detail,description:String(p.description||"").slice(0,80)};}
 
 async function audit(){
   const account=await getMpAccount();
@@ -85,6 +86,8 @@ async function audit(){
   }
   const paidFuture=foundPaid.filter(p=>new Date(p?.money_release_date||0).getTime()>now);
   const paidOverdue=foundPaid.filter(p=>!(new Date(p?.money_release_date||0).getTime()>now));
+  const missingFuture=missing.filter(p=>new Date(p?.money_release_date||0).getTime()>now);
+  const missingOverdue=missing.filter(p=>!(new Date(p?.money_release_date||0).getTime()>now));
   const byOp={};
   for(const p of pending){
     const k=String(p?.operation_type||"missing");
@@ -102,8 +105,12 @@ async function audit(){
     overdue_all_found:bucket(overdue),
     paid_future:bucket(paidFuture),
     paid_overdue:bucket(paidOverdue),
+    missing_future:bucket(missingFuture),
+    missing_overdue:bucket(missingOverdue),
     by_operation:Object.fromEntries(Object.entries(byOp).map(([k,v])=>[k,bucket(v)])),
-    overdue_paid_examples:paidOverdue.slice(0,30).map(p=>({id:p.id,order:ref(p),net:net(p),release:p.money_release_date,created:p.date_created,payment_type:p.payment_type_id,detail:p.status_detail}))
+    overdue_paid_examples:paidOverdue.slice(0,30).map(slim),
+    missing_future_examples:missingFuture.slice(0,50).map(slim),
+    missing_overdue_examples:missingOverdue.slice(0,50).map(slim)
   };
   console.log("[Financeiro MP PENDING DIAG V5]",JSON.stringify(summary));
   return summary;
