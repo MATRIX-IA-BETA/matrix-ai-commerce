@@ -40,7 +40,11 @@ installBlingNfePutPreserve();
 // =========================================================
 
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=9"></script>\n`;
+const MATRIX_NAV_ASSETS = `
+<link rel="stylesheet" href="/matrix-global-nav.css?v=4">
+<script defer src="/matrix-global-nav.js?v=9"></script>
+<script defer src="/matrix-voice.js?v=1"></script>
+`;
 
 function sendMatrixPage(fileName) {
   return (req, res, next) => {
@@ -61,7 +65,9 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/fiscal-marketplace-links.js?v=1"></script>\n</head>`
+          `
+<script defer src="/fiscal-marketplace-links.js?v=1"></script>
+</head>`
         );
       }
 
@@ -71,7 +77,9 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/sac-ml-ai-review.js?v=2"></script>\n</head>`
+          `
+<script defer src="/sac-ml-ai-review.js?v=2"></script>
+</head>`
         );
       }
 
@@ -81,7 +89,10 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/finance-enhancements.js?v=2"></script>\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
+          `
+<script defer src="/finance-enhancements.js?v=2"></script>
+<script defer src="/finance-pluggy.js?v=1"></script>
+</head>`
         );
       }
 
@@ -91,7 +102,9 @@ function sendMatrixPage(fileName) {
       ) {
         html = html.replace(
           "</head>",
-          `\n<script defer src="/stock-bom-substitutions.js?v=1"></script>\n</head>`
+          `
+<script defer src="/stock-bom-substitutions.js?v=1"></script>
+</head>`
         );
       }
 
@@ -181,6 +194,7 @@ app.use(require("./src/routes/stock-dashboard"));
 app.use(require("./src/routes/stock"));
 app.use(require("./src/routes/erp"));
 app.use(require("./src/routes/customers"));
+app.use(require("./src/routes/matrix-command"));
 
 // V3: prioriza CPF/CNPJ do billing-info do Mercado Livre para localizar
 // NF-es que já foram emitidas manualmente no Bling.
@@ -198,6 +212,8 @@ app.use(require("./src/routes/bling-documents-v2"));
 app.use(require("./src/routes/bling-emit-guard"));
 
 app.use(require("./src/routes/bling"));
+// Intercepta apenas comandos administrativos "Matrix..." antes do SAC comum.
+app.use(require("./src/routes/matrix-whatsapp-voice"));
 app.use(require("./src/routes/whatsapp"));
 
 // =========================================================
