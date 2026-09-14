@@ -52,13 +52,21 @@ function net(p){
 function ref(p){
   return [p?.external_reference,p?.order?.id,p?.order_id].filter(v=>v!=null).map(String).find(v=>/^200\d{10,}$/.test(v))||null;
 }
+function collectorId(p){return String(p?.collector?.id ?? p?.collector_id ?? p?.collector?.user_id ?? "");}
+function payerId(p){return String(p?.payer?.id ?? p?.payer_id ?? "");}
+function isFuture(p,now){const t=new Date(p?.money_release_date||0).getTime(); return Number.isFinite(t)&&t>now;}
 function sum(rows){return money(rows.reduce((s,p)=>s+net(p),0));}
 function bucket(rows){return {count:rows.length,net:sum(rows)};}
-function slim(p){return {id:p.id,order:ref(p),net:net(p),release:p.money_release_date,created:p.date_created,operation:p.operation_type,payment_type:p.payment_type_id,detail:p.status_detail,description:String(p.description||"").slice(0,80)};}
+function slim(p){return {id:p.id,order:ref(p),net:net(p),release:p.money_release_date,created:p.date_created,collector:collectorId(p),payer:payerId(p),operation:p.operation_type,payment_type:p.payment_type_id,detail:p.status_detail,description:String(p.description||"").slice(0,80)};}
 
 async function audit(){
   const account=await getMpAccount();
+  const sellerId=String(account.user_id||account.account_id||"");
   const pending=await pendingPayments(account);
+  const collectedByUs=pending.filter(p=>collectorId(p)===sellerId);
+  const notCollectedByUs=pending.filter(p=>collectorId(p)!==sellerId);
+  const ownFuture=collectedByUs.filter(p=>isFuture(p,Date.now()));
+  const ownOverdue=collectedByUs.filter(p=>!isFuture(p,Date.now()));
   const withRef=pending.filter(p=>ref(p));
   const withoutRef=pending.filter(p=>!ref(p));
   const refs=[...new Set(withRef.map(ref))];
@@ -81,20 +89,24 @@ async function audit(){
     if(st==="paid") foundPaid.push(p);
     else if(st==="cancelled" || st==="canceled") foundCancelled.push(p);
     else foundOther.push(p);
-    const release=new Date(p?.money_release_date||0).getTime();
-    if(Number.isFinite(release)&&release>now) future.push(p); else overdue.push(p);
+    if(isFuture(p,now)) future.push(p); else overdue.push(p);
   }
-  const paidFuture=foundPaid.filter(p=>new Date(p?.money_release_date||0).getTime()>now);
-  const paidOverdue=foundPaid.filter(p=>!(new Date(p?.money_release_date||0).getTime()>now));
-  const missingFuture=missing.filter(p=>new Date(p?.money_release_date||0).getTime()>now);
-  const missingOverdue=missing.filter(p=>!(new Date(p?.money_release_date||0).getTime()>now));
+  const paidFuture=foundPaid.filter(p=>isFuture(p,now));
+  const paidOverdue=foundPaid.filter(p=>!isFuture(p,now));
+  const missingFuture=missing.filter(p=>isFuture(p,now));
+  const missingOverdue=missing.filter(p=>!isFuture(p,now));
   const byOp={};
   for(const p of pending){
     const k=String(p?.operation_type||"missing");
     byOp[k]=byOp[k]||[]; byOp[k].push(p);
   }
   const summary={
+    seller_id:sellerId,
     all_pending:bucket(pending),
+    collected_by_account:bucket(collectedByUs),
+    not_collected_by_account:bucket(notCollectedByUs),
+    collected_future:bucket(ownFuture),
+    collected_overdue:bucket(ownOverdue),
     with_ml_order_ref:bucket(withRef),
     without_ml_order_ref:bucket(withoutRef),
     order_found_paid:bucket(foundPaid),
@@ -108,7 +120,8 @@ async function audit(){
     missing_future:bucket(missingFuture),
     missing_overdue:bucket(missingOverdue),
     by_operation:Object.fromEntries(Object.entries(byOp).map(([k,v])=>[k,bucket(v)])),
-    overdue_paid_examples:paidOverdue.slice(0,30).map(slim),
+    not_collected_examples:notCollectedByUs.slice(0,50).map(slim),
+    collected_overdue_examples:ownOverdue.slice(0,50).map(slim),
     missing_future_examples:missingFuture.slice(0,50).map(slim),
     missing_overdue_examples:missingOverdue.slice(0,50).map(slim)
   };
