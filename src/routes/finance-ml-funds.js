@@ -1,4 +1,5 @@
 const router = require("express").Router();
+require("./finance-mp-release-fast-window");
 router.use(require("./finance-mp-detach-pluggy"));
 router.use(require("./finance-open-finance-mp-filter"));
 router.use(require("./finance-mp-direct-v6"));
