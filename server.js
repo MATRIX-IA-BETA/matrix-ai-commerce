@@ -1,249 +1,267 @@
 const express = require("express");
 const path = require("path");
-const fs = require("fs");
-
-const { env } = require("./src/config/env");
-const { installBlingRateLimitGuard } = require("./src/services/bling-rate-limit");
-const { supabase } = require("./src/db/supabase");
-const { createAnalyticsRouter } = require("./src/routes/analytics");
-const { installBlingNfeParcelDateGuard } = require("./src/services/bling-nfe-parcel-date-guard");
-const { installBlingNfeRequiredFields } = require("./src/services/bling-nfe-required-fields");
-const { installBlingNfePutPreserve } = require("./src/services/bling-nfe-put-preserve");
-
-// Todas as chamadas para a API do Bling passam por uma fila única, com
-// espaçamento mínimo entre requisições e retry automático quando houver 429.
-// Isso evita que sync de histórico, consulta de contato/produto e emissão de
-// NF-e estourem juntos o limite por segundo da API.
-installBlingRateLimitGuard();
+const crypto = require("crypto");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+const COOKIE_NAME = "matrix_portal_session";
+const SESSION_MAX_AGE = 60 * 60 * 12;
+const ATTEMPT_WINDOW = 15 * 60 * 1000;
+const MAX_ATTEMPTS = 6;
+const attempts = new Map();
 
-app.use(express.json({ limit: "2mb" }));
+app.disable("x-powered-by");
+app.use(express.urlencoded({ extended: false, limit: "8kb" }));
 
-// Instala primeiro a guarda de vencimento. A camada de campos obrigatórios
-// cria a parcela e, ao encaminhar o payload, a guarda garante que a data nunca
-// fique anterior à data fiscal corrente (evita rejeição SEFAZ 900).
-installBlingNfeParcelDateGuard();
+app.use((req, res, next) => {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, private",
+    Pragma: "no-cache",
+    Expires: "0",
+    "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+  });
+  next();
+});
 
-// Completa cabeçalho fiscal/pagamento usando uma NF-e autorizada da própria
-// conta como referência. Depois carregamos o vínculo do produto fiscal.
-installBlingNfeRequiredFields();
-const { installBlingFiscalProductLink } = require("./src/services/bling-fiscal-product-link");
-installBlingFiscalProductLink();
+app.get("/portal.css", (req, res) => {
+  res.type("text/css").sendFile(path.join(__dirname, "public", "portal.css"));
+});
 
-// PUT /nfe/{id} substitui o recurso e exige os identificadores da nota.
-// Antes da atualização, consulta a NF-e existente e preserva número/série.
-installBlingNfePutPreserve();
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send("User-agent: *\nDisallow: /\n");
+});
 
-// =========================================================
-// INTERFACES WEB
-// =========================================================
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", service: "matrix-ai-portal" });
+});
 
-const PUBLIC_DIR = path.join(__dirname, "src", "public");
-const MATRIX_NAV_ASSETS = `\n<link rel="stylesheet" href="/matrix-global-nav.css?v=4">\n<script defer src="/matrix-global-nav.js?v=9"></script>\n`;
-
-function sendMatrixPage(fileName) {
-  return (req, res, next) => {
-    const filePath = path.join(PUBLIC_DIR, fileName);
-
-    fs.readFile(filePath, "utf8", (error, source) => {
-      if (error) return next(error);
-
-      let html = source;
-
-      if (!html.includes("matrix-global-nav.css")) {
-        html = html.replace("</head>", `${MATRIX_NAV_ASSETS}</head>`);
-      }
-
-      if (
-        fileName === "fiscal-nfe.html" &&
-        !html.includes("fiscal-marketplace-links.js")
-      ) {
-        html = html.replace(
-          "</head>",
-          `\n<script defer src="/fiscal-marketplace-links.js?v=1"></script>\n</head>`
-        );
-      }
-
-      if (
-        fileName === "sac-ml.html" &&
-        !html.includes("sac-ml-ai-review.js")
-      ) {
-        html = html.replace(
-          "</head>",
-          `\n<script defer src="/sac-ml-ai-review.js?v=2"></script>\n</head>`
-        );
-      }
-
-      if (
-        fileName === "finance.html" &&
-        !html.includes("finance-pluggy.js")
-      ) {
-        html = html.replace(
-          "</head>",
-          `\n<script defer src="/finance-enhancements.js?v=2"></script>\n<script defer src="/finance-pluggy.js?v=1"></script>\n</head>`
-        );
-      }
-
-      if (
-        fileName === "stock.html" &&
-        !html.includes("stock-bom-substitutions.js")
-      ) {
-        html = html.replace(
-          "</head>",
-          `\n<script defer src="/stock-bom-substitutions.js?v=1"></script>\n</head>`
-        );
-      }
-
-      res.set({
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-        Pragma: "no-cache",
-        Expires: "0"
-      });
-
-      res.type("html").send(html);
-    });
-  };
+function safeEqual(left, right) {
+  const a = Buffer.from(String(left || ""));
+  const b = Buffer.from(String(right || ""));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-// Home / hub principal Matrix AI.
-app.get("/", sendMatrixPage("index.html"));
-app.get("/index.html", sendMatrixPage("index.html"));
+function sign(payload) {
+  const secret = process.env.PORTAL_SESSION_SECRET || "";
+  if (!secret) return "";
+  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
 
-// Central Fiscal.
-app.get("/fiscal-nfe.html", sendMatrixPage("fiscal-nfe.html"));
+function sessionValue() {
+  const payload = "matrix-ai-owner-v1";
+  return `${payload}.${sign(payload)}`;
+}
 
-// Central SAC WhatsApp.
-app.get("/sac/central", sendMatrixPage("sac-central.html"));
-app.get("/sac/mobile", sendMatrixPage("sac-central.html"));
-app.get("/sac/mobile.html", sendMatrixPage("sac-central.html"));
-app.get("/sac-central.html", sendMatrixPage("sac-central.html"));
+function parseCookies(header = "") {
+  return header.split(";").reduce((cookies, item) => {
+    const index = item.indexOf("=");
+    if (index < 0) return cookies;
+    const key = item.slice(0, index).trim();
+    const value = item.slice(index + 1).trim();
+    cookies[key] = decodeURIComponent(value);
+    return cookies;
+  }, {});
+}
 
-// SAC Mercado Livre - mensagens pós-compra.
-app.get("/sac/ml", sendMatrixPage("sac-ml.html"));
-app.get("/sac-ml.html", sendMatrixPage("sac-ml.html"));
+function isAuthenticated(req) {
+  const current = parseCookies(req.headers.cookie)[COOKIE_NAME];
+  const expected = sessionValue();
+  return Boolean(expected) && safeEqual(current, expected);
+}
 
-// Central dedicada às reclamações/claims do Mercado Livre.
-app.get("/sac/reclamacoes", sendMatrixPage("reclamacoes-ml.html"));
-app.get("/reclamacoes-ml.html", sendMatrixPage("reclamacoes-ml.html"));
+function appUrl() {
+  const fallback = "https://steadfast-insight-production-2092.up.railway.app";
+  try {
+    const value = new URL(process.env.MATRIX_APP_URL || fallback);
+    return value.protocol === "https:" ? value.toString() : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-// Perguntas pré-venda dos anúncios Mercado Livre.
-app.get("/sac/perguntas", sendMatrixPage("mercadolivre-perguntas.html"));
-app.get("/sac/perguntas-ml", sendMatrixPage("mercadolivre-perguntas.html"));
-app.get("/mercadolivre-perguntas.html", sendMatrixPage("mercadolivre-perguntas.html"));
+function shell(title, body) {
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet,noimageindex">
+  <meta name="theme-color" content="#050816">
+  <title>${title}</title>
+  <link rel="stylesheet" href="/portal.css">
+</head>
+<body>${body}</body>
+</html>`;
+}
 
-// Financeiro e patrimônio consolidado da empresa.
-app.get("/finance", sendMatrixPage("finance.html"));
-app.get("/finance.html", sendMatrixPage("finance.html"));
+function brand() {
+  return `<a class="brand" href="/" aria-label="Matrix AI">
+    <span class="brandMark"><i></i><b></b></span>
+    <span>Matrix <strong>AI</strong></span>
+  </a>`;
+}
 
-// Cockpit de estoque, peças e kits.
-app.get("/stock", sendMatrixPage("stock.html"));
-app.get("/stock.html", sendMatrixPage("stock.html"));
+function loginPage(message = "") {
+  const error = message
+    ? `<div class="formError" role="alert">${message}</div>`
+    : "";
 
-// ERP integrado com o histórico operacional do SICNET.
-app.get("/erp", sendMatrixPage("erp.html"));
-app.get("/erp.html", sendMatrixPage("erp.html"));
+  return shell("Matrix AI | Acesso privado", `
+    <main class="gate">
+      <section class="gateIntro">
+        ${brand()}
+        <div class="gateCopy">
+          <span class="eyebrow">COMMERCE OPERATING SYSTEM</span>
+          <h1>A operação inteira.<br><em>Uma única inteligência.</em></h1>
+          <p>Estoque, vendas, fiscal, financeiro e atendimento trabalhando juntos — sem planilha perdida no multiverso.</p>
+          <div class="gateSignals">
+            <span>Mercado Livre</span><span>Estoque</span><span>SAC IA</span><span>Financeiro</span>
+          </div>
+        </div>
+        <p class="legal">Ambiente privado · Shop Matrix © 2026</p>
+      </section>
+      <aside class="loginPanel">
+        <div class="loginCard">
+          <span class="secureBadge"><i></i> ACESSO PROTEGIDO</span>
+          <h2>Bem-vindo de volta</h2>
+          <p>Entre para acessar o portal Matrix AI.</p>
+          <form action="/login" method="post">
+            <label for="password">Senha de acesso</label>
+            <div class="passwordField">
+              <span>⌁</span>
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha" required autofocus>
+            </div>
+            ${error}
+            <button class="button primaryButton" type="submit">Entrar no portal <span>→</span></button>
+          </form>
+          <div class="loginFoot"><span class="lock">◆</span><span>Sessão segura e conteúdo não indexado</span></div>
+        </div>
+      </aside>
+    </main>`);
+}
 
-// Envio/atualização manual de XML de NF-e para o Mercado Livre.
-app.get("/ml/xml", sendMatrixPage("xml-ml.html"));
-app.get("/xml-ml.html", sendMatrixPage("xml-ml.html"));
+function portalPage() {
+  const cards = [
+    ["↗", "Vendas sob controle", "Mercado Livre, pedidos e indicadores reunidos em uma visão operacional."],
+    ["◫", "Estoque inteligente", "Peças, kits, movimentações e patrimônio sem duplicidade e sem adivinhação."],
+    ["✦", "SAC com IA", "Atendimento mais rápido, respostas consistentes e histórico centralizado."],
+    ["R$", "Financeiro conectado", "Contas, conciliação, documentos fiscais e visão executiva em um só lugar."]
+  ].map(([icon, title, text]) => `
+    <article><span class="capIcon">${icon}</span><h3>${title}</h3><p>${text}</p></article>
+  `).join("");
 
-// Painel executivo Mercado Livre.
-app.get("/mercadolivre", sendMatrixPage("mercadolivre-painel.html"));
-app.get("/painel/mercadolivre", sendMatrixPage("mercadolivre-painel.html"));
-app.get("/mercadolivre-painel.html", sendMatrixPage("mercadolivre-painel.html"));
+  return shell("Matrix AI | Portal privado", `
+    <header class="siteHeader">
+      ${brand()}
+      <nav><a href="#plataforma">Plataforma</a><a href="#visao">Visão</a></nav>
+      <form action="/logout" method="post"><button class="logout" type="submit">Sair</button></form>
+    </header>
+    <main class="siteMain">
+      <section class="hero" id="visao">
+        <div class="heroCopy">
+          <span class="privateBadge"><i></i> AMBIENTE PRIVADO</span>
+          <h1>Seu negócio no comando.<br><em>A IA no operacional.</em></h1>
+          <p>A Matrix AI transforma dados espalhados em decisões claras, conectando tudo que move a Shop Matrix em uma experiência simples.</p>
+          <div class="heroActions">
+            <a class="button primaryButton" href="/app">Acessar Matrix AI <span>→</span></a>
+            <a class="textLink" href="#plataforma">Conhecer a plataforma</a>
+          </div>
+          <div class="trustRow">
+            <span><i></i> Operação centralizada</span>
+            <span><i></i> Acesso restrito</span>
+            <span><i></i> Dados em tempo real</span>
+          </div>
+        </div>
+        <div class="productVisual" aria-label="Prévia do painel Matrix AI">
+          <div class="glow"></div>
+          <div class="window">
+            <div class="windowTop">
+              <div class="miniBrand"><span class="brandMark small"><i></i><b></b></span> Matrix AI</div>
+              <span class="status"><i></i> Online</span>
+            </div>
+            <div class="windowBody">
+              <aside class="miniNav"><span class="active">⌂</span><span>◫</span><span>↗</span><span>✦</span><span>⚙</span></aside>
+              <div class="miniContent">
+                <div class="miniTitle"><span>Painel executivo</span><b>Hoje</b></div>
+                <div class="stats">
+                  <div><small>VENDAS</small><strong>403</strong><em>↑ 18%</em></div>
+                  <div><small>OPERAÇÃO</small><strong>Online</strong><em>Estável</em></div>
+                  <div><small>AUTOMAÇÕES</small><strong>12</strong><em>Ativas</em></div>
+                </div>
+                <div class="chartCard">
+                  <div class="chartHead"><span>Visão da operação</span><small>Últimos 7 dias</small></div>
+                  <div class="bars"><i class="h38"></i><i class="h52"></i><i class="h46"></i><i class="h68"></i><i class="h61"></i><i class="h83"></i><i class="h92"></i></div>
+                </div>
+                <div class="activity"><i></i><span><b>Sistema sincronizado</b><small>Todos os módulos respondendo</small></span><em>agora</em></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="platform" id="plataforma">
+        <div class="sectionHeading">
+          <span class="eyebrow">UMA PLATAFORMA. TODA A EMPRESA.</span>
+          <h2>Menos troca de tela.<br>Mais decisão.</h2>
+          <p>Cada módulo conversa com o próximo para eliminar retrabalho e mostrar o que realmente importa.</p>
+        </div>
+        <div class="capabilityGrid">${cards}</div>
+      </section>
+      <section class="closing">
+        <div><span class="eyebrow">PRONTO PARA OPERAR</span><h2>A Matrix AI já está esperando por você.</h2></div>
+        <a class="button lightButton" href="/app">Entrar no aplicativo <span>→</span></a>
+      </section>
+    </main>
+    <footer>Matrix AI · Tecnologia criada dentro da operação, para a operação.</footer>
+  `);
+}
 
-// Arquivos estáticos auxiliares (CSS/JS/etc.). O index fica desativado aqui
-// porque a rota / acima injeta a navegação global antes de entregar a home.
-app.use(express.static(PUBLIC_DIR, { index: false }));
-
-// =========================================================
-// ROTAS EXISTENTES
-// =========================================================
-
-app.use(require("./src/routes/basic"));
-app.use(require("./src/routes/webhooks-mercadolivre"));
-// O callback financeiro do Mercado Pago reaproveita a redirect URI do ML e
-// precisa ter a primeira chance de capturar apenas os states prefixados mp_.
-app.use(require("./src/routes/finance-ml-funds"));
-app.use(require("./src/routes/mercadolivre"));
-app.use(require("./src/routes/sac"));
-app.use(require("./src/routes/ml-sac-history-links"));
-app.use(require("./src/routes/ml-sac-live-filter-v2"));
-app.use(require("./src/routes/ml-sac-live"));
-app.use(require("./src/routes/ml-sac-ai-review"));
-app.use(require("./src/routes/ml-questions-sac"));
-app.use(require("./src/routes/ml-claims-center"));
-app.use(require("./src/routes/ml-xml-upload"));
-app.use(require("./src/routes/finance"));
-app.use(require("./src/routes/finance-open-finance"));
-app.use(require("./src/routes/stock-dashboard"));
-app.use(require("./src/routes/stock"));
-app.use(require("./src/routes/erp"));
-app.use(require("./src/routes/customers"));
-
-// V3: prioriza CPF/CNPJ do billing-info do Mercado Livre para localizar
-// NF-es que já foram emitidas manualmente no Bling.
-app.use(require("./src/routes/fiscal-cpf-sync-v3"));
-
-// Mantida como fallback para compatibilidade com as rotas fiscais anteriores.
-app.use(require("./src/routes/fiscal-queue-v2"));
-app.use(require("./src/routes/fiscal"));
-
-// Corrige o download DANFE/XML usando a rota oficial atual do Bling.
-app.use(require("./src/routes/bling-documents-v2"));
-
-// Antes de tentar atualizar/emitir, consulta o ID conhecido no Bling.
-// Se a NF-e já estiver autorizada, apenas sincroniza a Matrix e encerra.
-app.use(require("./src/routes/bling-emit-guard"));
-
-app.use(require("./src/routes/bling"));
-app.use(require("./src/routes/whatsapp"));
-
-// =========================================================
-// MATRIX AI ANALYTICS
-// =========================================================
-
-app.use(
-  "/api/analytics",
-  createAnalyticsRouter({ supabase })
-);
-
-// =========================================================
-// ROTA 404
-// =========================================================
-
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Rota não encontrada.",
-    path: req.path
-  });
+app.get("/", (req, res) => {
+  res.type("html").send(isAuthenticated(req) ? portalPage() : loginPage());
 });
 
-// =========================================================
-// ERRO GLOBAL
-// =========================================================
+app.post("/login", (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  let record = attempts.get(ip);
 
-app.use((error, req, res, next) => {
-  console.error("Erro não tratado:", error);
-
-  if (res.headersSent) {
-    return next(error);
+  if (!record || now - record.startedAt > ATTEMPT_WINDOW) {
+    record = { count: 0, startedAt: now };
   }
 
-  res.status(500).json({
-    success: false,
-    message: error?.message || "Erro interno."
-  });
+  if (record.count >= MAX_ATTEMPTS) {
+    return res.status(429).type("html").send(loginPage("Muitas tentativas. Aguarde alguns minutos."));
+  }
+
+  if (!safeEqual(req.body.password, process.env.PORTAL_ACCESS_PASSWORD)) {
+    record.count += 1;
+    attempts.set(ip, record);
+    return res.status(401).type("html").send(loginPage("Senha incorreta. Confira e tente novamente."));
+  }
+
+  attempts.delete(ip);
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${encodeURIComponent(sessionValue())}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${SESSION_MAX_AGE}`);
+  res.redirect(303, "/");
 });
 
-// =========================================================
-// SERVIDOR
-// =========================================================
+app.post("/logout", (req, res) => {
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`);
+  res.redirect(303, "/");
+});
 
-const PORT = env.PORT || process.env.PORT || 3000;
+app.get("/app", (req, res) => {
+  if (!isAuthenticated(req)) return res.redirect(303, "/");
+  res.redirect(302, appUrl());
+});
+
+app.use((req, res) => {
+  res.status(404).type("html").send(isAuthenticated(req) ? portalPage() : loginPage());
+});
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Matrix AI Commerce V2 modular rodando na porta ${PORT}`);
+  console.log(`Matrix AI Portal rodando na porta ${PORT}`);
 });
