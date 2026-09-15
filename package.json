@@ -2,15 +2,11 @@
   "name": "matrix-ai-private-portal",
   "version": "1.0.0",
   "private": true,
-  "description": "Portal privado do Matrix AI",
-  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "engines": {
-    "node": ">=22"
-  },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "express": "^5.1.0"
   }
 }
