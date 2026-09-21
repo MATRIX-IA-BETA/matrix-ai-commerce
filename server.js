@@ -153,6 +153,10 @@ app.get("/finance.html", sendMatrixPage("finance.html"));
 app.get("/stock", sendMatrixPage("stock.html"));
 app.get("/stock.html", sendMatrixPage("stock.html"));
 
+// Estoque Matrix 2.0: reconstrução organizada em paralelo, sem substituir o estoque atual.
+app.get("/stock-v2", sendMatrixPage("stock-v2.html"));
+app.get("/stock-v2.html", sendMatrixPage("stock-v2.html"));
+
 // ERP integrado com o histórico operacional do SICNET.
 app.get("/erp", sendMatrixPage("erp.html"));
 app.get("/erp.html", sendMatrixPage("erp.html"));
