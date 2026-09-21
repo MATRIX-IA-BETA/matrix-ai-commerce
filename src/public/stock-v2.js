@@ -11,7 +11,7 @@ function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
 function productId(p){return Number(p.product_id||p.id||0)}
 function physical(p){return !['kit','service'].includes(String(p.product_type||''))}
 function typeLabel(t){return({component:'Peça',simple:'Produto',kit:'Kit / PC',service:'Serviço'})[t]||t||'-'}
-function movementLabel(t){return({entry:'Entrada',adjustment:'Ajuste',sale:'Venda',cancellation_return:'Estorno',production:'Produção',inventory:'Inventário'})[t]||t||'Movimento'}
+function movementLabel(t){return({entry:'Entrada',adjustment:'Ajuste',sale:'Venda',cancellation_return:'Estorno',production:'Produção',inventory:'Inventário',rma_transfer:'RMA'})[t]||t||'Movimento'}
 function status(el,type,msg){el.className='statusBox show '+type;el.textContent=msg}
 function clearStatus(el){el.className='statusBox';el.textContent=''}
 async function api(url,options={}){
@@ -51,12 +51,14 @@ function stockClass(v){return num(v)<0?'negative':num(v)>0?'positive':''}
 function renderKpis(){
   const physicalRows=state.products.filter(physical);
   const value=physicalRows.reduce((s,p)=>s+num(p.stock_value),0);
-  const onHand=physicalRows.reduce((s,p)=>s+num(p.on_hand),0);
-  const negative=physicalRows.filter(p=>num(p.on_hand)<0||num(p.available)<0).length;
-  const low=physicalRows.filter(p=>p.below_minimum||num(p.on_hand)<0||num(p.available)<0).length;
+  const total=physicalRows.reduce((s,p)=>s+num(p.total??p.on_hand),0);
+  const rma=physicalRows.reduce((s,p)=>s+num(p.rma),0);
+  const negative=physicalRows.filter(p=>num(p.available)<0||num(p.total??p.on_hand)<0).length;
+  const low=physicalRows.filter(p=>p.below_minimum||num(p.available)<0||num(p.total??p.on_hand)<0).length;
   $('kValue').textContent=money.format(value);
   $('kProducts').textContent=String(state.products.length);
-  $('kOnHand').textContent=qtyFmt.format(onHand);
+  $('kOnHand').textContent=qtyFmt.format(total);
+  $('kRma').textContent=qtyFmt.format(rma);
   $('kNegative').textContent=String(negative);
   $('kLow').textContent=String(low);
 }
@@ -66,12 +68,14 @@ function renderDashboard(){
     '<td class="sku">'+esc(p.sku)+'</td>'+
     '<td class="productName">'+esc(p.name)+'</td>'+
     '<td>'+esc(p.category||'-')+'</td>'+
-    '<td class="num '+stockClass(p.on_hand)+'">'+qtyFmt.format(num(p.on_hand))+'</td>'+
+    '<td class="num '+stockClass(p.total??p.on_hand)+'">'+qtyFmt.format(num(p.total??p.on_hand))+'</td>'+
     '<td class="num '+stockClass(p.available)+'">'+qtyFmt.format(num(p.available))+'</td>'+
+    '<td class="num">'+qtyFmt.format(num(p.rma))+'</td>'+
+    '<td title="'+esc(p.rma_note||'')+'">'+esc(p.rma_note||'-')+'</td>'+
     '<td class="num">'+qtyFmt.format(num(p.minimum_stock))+'</td>'+
     '<td class="num">'+money.format(num(p.actual_cost))+'</td>'+
     '<td class="num">'+money.format(num(p.stock_value))+'</td>'+
-  '</tr>').join(''):'<tr><td colspan="8" class="empty">Nenhum produto encontrado.</td></tr>';
+  '</tr>').join(''):'<tr><td colspan="10" class="empty">Nenhum produto encontrado.</td></tr>';
   const mov=state.movements.slice(0,12);
   $('dashMovements').innerHTML=mov.length?mov.map(m=>{
     const q=num(m.quantity),d=new Date(m.created_at);
@@ -82,37 +86,38 @@ function renderProducts(){
   const rows=filteredProducts('productSearch','productType');
   $('productRows').innerHTML=rows.length?rows.map(p=>{
     const id=productId(p),isKit=p.product_type==='kit';
-    const situation=(p.below_minimum||num(p.on_hand)<0||num(p.available)<0)?'<span class="tag low">atenção</span>':'';
+    const situation=(p.below_minimum||num(p.total??p.on_hand)<0||num(p.available)<0)?'<span class="tag low">atenção</span>':'';
     return '<tr>'+
       '<td class="sku">'+esc(p.sku)+'</td>'+
       '<td><span class="productName">'+esc(p.name)+'</span> '+situation+'</td>'+
       '<td>'+esc(p.category||'-')+'</td>'+
       '<td><span class="tag '+(isKit?'kit':'')+'">'+esc(typeLabel(p.product_type))+'</span></td>'+
-      '<td class="num '+stockClass(p.on_hand)+'">'+qtyFmt.format(num(p.on_hand))+'</td>'+
-      '<td class="num">'+qtyFmt.format(num(p.reserved))+'</td>'+
+      '<td class="num '+stockClass(p.total??p.on_hand)+'">'+qtyFmt.format(num(p.total??p.on_hand))+'</td>'+
       '<td class="num '+stockClass(p.available)+'">'+qtyFmt.format(num(p.available))+'</td>'+
+      '<td class="num">'+qtyFmt.format(num(p.rma))+'</td>'+
+      '<td title="'+esc(p.rma_note||'')+'">'+esc(p.rma_note||'-')+'</td>'+
       '<td class="num">'+qtyFmt.format(num(p.minimum_stock))+'</td>'+
       '<td class="num">'+money.format(num(p.actual_cost))+'</td>'+
       '<td>'+esc(p.supplier_name||'-')+'</td>'+
       '<td>'+esc(p.location_code||'-')+'</td>'+
-      '<td>'+(isKit?'<button class="btn" data-action="kit-detail" data-id="'+id+'">Composição</button>':'<button class="btn" data-action="edit" data-id="'+id+'">Ajustar</button>')+'</td>'+
+      '<td>'+(isKit?'<button class="btn" data-action="kit-detail" data-id="'+id+'">Composição</button>':'<button class="btn" data-action="edit" data-id="'+id+'">Ajustar</button> <button class="btn purple" data-action="rma" data-id="'+id+'">RMA</button>')+'</td>'+
     '</tr>';
-  }).join(''):'<tr><td colspan="12" class="empty">Nenhum produto encontrado.</td></tr>';
+  }).join(''):'<tr><td colspan="13" class="empty">Nenhum produto encontrado.</td></tr>';
 }
 function renderMovements(){
   const filter=$('movementFilter').value;
   const rows=state.movements.filter(m=>!filter||m.movement_type===filter);
   $('movementRows').innerHTML=rows.length?rows.map(m=>{
-    const q=num(m.quantity),d=new Date(m.created_at);
-    return '<div class="movement"><span class="muted">'+(isNaN(d)?'-':dateFmt.format(d))+'</span><div><strong>'+esc(m.product_name||m.product_sku||'Produto')+'</strong><div class="muted">'+esc(movementLabel(m.movement_type))+(m.notes?' · '+esc(m.notes):'')+(m.marketplace_order_id?' · ML '+esc(m.marketplace_order_id):'')+'</div></div><span class="qty '+(q<0?'negative':'positive')+'">'+(q>0?'+':'')+qtyFmt.format(q)+'</span><span class="muted">'+(m.unit_cost==null?'':money.format(num(m.unit_cost)))+'</span></div>';
+    const q=m.movement_type==='rma_transfer'?num(m.metadata?.rma_delta):num(m.quantity),d=new Date(m.created_at),suffix=m.movement_type==='rma_transfer'?' RMA':'';
+    return '<div class="movement"><span class="muted">'+(isNaN(d)?'-':dateFmt.format(d))+'</span><div><strong>'+esc(m.product_name||m.product_sku||'Produto')+'</strong><div class="muted">'+esc(movementLabel(m.movement_type))+(m.notes?' · '+esc(m.notes):'')+(m.marketplace_order_id?' · ML '+esc(m.marketplace_order_id):'')+'</div></div><span class="qty '+(q<0?'negative':'positive')+'">'+(q>0?'+':'')+qtyFmt.format(q)+suffix+'</span><span class="muted">'+(m.unit_cost==null?'':money.format(num(m.unit_cost)))+'</span></div>';
   }).join(''):'<div class="empty">Nenhuma movimentação nesse filtro.</div>';
 }
 function renderLow(){
-  const rows=state.products.filter(p=>physical(p)&&(p.below_minimum||num(p.on_hand)<0||num(p.available)<0));
+  const rows=state.products.filter(p=>physical(p)&&(p.below_minimum||num(p.total??p.on_hand)<0||num(p.available)<0));
   $('lowRows').innerHTML=rows.length?rows.map(p=>{
-    const negative=num(p.on_hand)<0||num(p.available)<0;
-    return '<tr><td class="sku">'+esc(p.sku)+'</td><td class="productName">'+esc(p.name)+'</td><td class="num '+stockClass(p.on_hand)+'">'+qtyFmt.format(num(p.on_hand))+'</td><td class="num '+stockClass(p.available)+'">'+qtyFmt.format(num(p.available))+'</td><td class="num">'+qtyFmt.format(num(p.minimum_stock))+'</td><td><span class="tag '+(negative?'low':'')+'">'+(negative?'NEGATIVO':'ABAIXO DO MÍNIMO')+'</span></td><td><button class="btn" data-action="edit" data-id="'+productId(p)+'">Ajustar</button></td></tr>';
-  }).join(''):'<tr><td colspan="7" class="empty">Nenhum item abaixo do mínimo ou negativo.</td></tr>';
+    const negative=num(p.total??p.on_hand)<0||num(p.available)<0;
+    return '<tr><td class="sku">'+esc(p.sku)+'</td><td class="productName">'+esc(p.name)+'</td><td class="num '+stockClass(p.total??p.on_hand)+'">'+qtyFmt.format(num(p.total??p.on_hand))+'</td><td class="num '+stockClass(p.available)+'">'+qtyFmt.format(num(p.available))+'</td><td class="num">'+qtyFmt.format(num(p.rma))+'</td><td class="num">'+qtyFmt.format(num(p.minimum_stock))+'</td><td><span class="tag '+(negative?'low':'')+'">'+(negative?'NEGATIVO':'ABAIXO DO MÍNIMO')+'</span></td><td><button class="btn" data-action="edit" data-id="'+productId(p)+'">Ajustar</button> <button class="btn purple" data-action="rma" data-id="'+productId(p)+'">RMA</button></td></tr>';
+  }).join(''):'<tr><td colspan="8" class="empty">Nenhum item abaixo do mínimo ou negativo.</td></tr>';
 }
 function renderKits(){
   $('kitGrid').innerHTML=state.kits.length?state.kits.map(k=>'<div class="kitCard" data-action="kit-detail" data-id="'+Number(k.id)+'"><h3>'+esc(k.name)+'</h3><div class="sku">'+esc(k.sku||'-')+'</div><div class="muted" style="margin-top:7px">'+esc(k.category||'Sem categoria')+'</div><div class="kitMeta"><span class="tag kit">'+Number(k.component_count||0)+' componentes</span>'+(k.mlb?'<span class="tag">MLB '+esc(k.mlb)+'</span>':'<span class="tag">Sem MLB</span>')+(k.active===false?'<span class="tag low">Inativo</span>':'')+'</div></div>').join(''):'<div class="empty">Nenhum kit cadastrado.</div>';
@@ -121,7 +126,7 @@ function renderInventory(){
   const q=($('inventorySearch').value||'').trim().toLowerCase();
   const rows=state.products.filter(p=>physical(p)&&(!q||[p.sku,p.name,p.category].some(v=>String(v||'').toLowerCase().includes(q))));
   $('inventoryRows').innerHTML=rows.length?rows.map(p=>{
-    const id=productId(p),current=num(p.on_hand),has=state.inventory.has(id),counted=has?state.inventory.get(id):'',diff=has?num(counted)-current:0;
+    const id=productId(p),current=num(p.total??p.on_hand),has=state.inventory.has(id),counted=has?state.inventory.get(id):'',diff=has?num(counted)-current:0;
     return '<tr class="'+(has?'changedRow':'')+'"><td class="sku">'+esc(p.sku)+'</td><td class="productName">'+esc(p.name)+'</td><td class="num '+stockClass(current)+'">'+qtyFmt.format(current)+'</td><td class="num"><input class="inventoryCount" data-inventory-id="'+id+'" type="number" step="0.01" value="'+esc(counted)+'" placeholder="contar"></td><td class="num '+(has?stockClass(diff):'')+'" id="inv-diff-'+id+'">'+(has?(diff>0?'+':'')+qtyFmt.format(diff):'-')+'</td></tr>';
   }).join(''):'<tr><td colspan="5" class="empty">Nenhum item encontrado.</td></tr>';
   $('applyInventoryBtn').disabled=state.inventory.size===0;
@@ -181,7 +186,7 @@ $('saveMovementBtn').addEventListener('click',async()=>{
 
 function openEdit(id){
   const p=state.products.find(x=>productId(x)===Number(id));if(!p)return;
-  clearStatus($('editStatus'));$('eProductId').value=String(id);$('eProductName').value=(p.sku||'')+' · '+(p.name||'');$('eQuantity').value=String(num(p.on_hand));$('eCost').value=String(num(p.actual_cost));$('eNotes').value='';openModal('editModal');
+  clearStatus($('editStatus'));$('eProductId').value=String(id);$('eProductName').value=(p.sku||'')+' · '+(p.name||'');$('eQuantity').value=String(num(p.total??p.on_hand));$('eCost').value=String(num(p.actual_cost));$('eNotes').value='';openModal('editModal');
 }
 $('saveEditBtn').addEventListener('click',async()=>{
   const b=$('saveEditBtn'),id=Number($('eProductId').value);try{
@@ -189,6 +194,30 @@ $('saveEditBtn').addEventListener('click',async()=>{
     await api('/stock/products/'+id+'/manual',{method:'PATCH',body:JSON.stringify({quantity:num($('eQuantity').value),actual_cost:num($('eCost').value),notes:$('eNotes').value.trim()||'Ajuste manual Estoque Matrix 2.0'})});
     status($('editStatus'),'ok','Ajuste registrado no histórico.');await load();setTimeout(closeModals,450);
   }catch(e){status($('editStatus'),'err',e.message)}finally{b.disabled=false}
+});
+
+function openRma(id){
+  const p=state.products.find(x=>productId(x)===Number(id));if(!p)return;
+  clearStatus($('rmaStatus'));
+  $('rProductId').value=String(id);
+  $('rProductName').value=(p.sku||'')+' · '+(p.name||'');
+  $('rTotal').value=String(num(p.total??p.on_hand));
+  $('rAvailable').value=String(num(p.available));
+  $('rQuantity').value=String(num(p.rma));
+  $('rNote').value=p.rma_note||'';
+  openModal('rmaModal');
+}
+$('rQuantity').addEventListener('input',()=>{
+  $('rAvailable').value=String(num($('rTotal').value)-num($('rQuantity').value));
+});
+$('saveRmaBtn').addEventListener('click',async()=>{
+  const b=$('saveRmaBtn'),id=Number($('rProductId').value);
+  try{
+    b.disabled=true;clearStatus($('rmaStatus'));
+    await api('/stock/products/'+id+'/rma',{method:'PATCH',body:JSON.stringify({rma_quantity:num($('rQuantity').value),rma_note:$('rNote').value.trim()})});
+    status($('rmaStatus'),'ok','RMA atualizado. O TOTAL permaneceu igual e o DISPONÍVEL foi recalculado.');
+    await load();setTimeout(closeModals,550);
+  }catch(e){status($('rmaStatus'),'err',e.message)}finally{b.disabled=false}
 });
 
 async function openKit(id){
@@ -207,6 +236,7 @@ async function openKit(id){
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-action]');if(!b)return;
   if(b.dataset.action==='edit')openEdit(b.dataset.id);
+  if(b.dataset.action==='rma')openRma(b.dataset.id);
   if(b.dataset.action==='kit-detail')openKit(b.dataset.id);
 });
 
