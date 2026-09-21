@@ -27,6 +27,11 @@ function actualCost(product) {
   return 0;
 }
 
+function rmaQuantity(product) {
+  const parsed = Number(product?.metadata?.rma_quantity || 0);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 async function setActualCost(productId, value, source = "manual") {
   const cost = Number(value);
   if (!Number.isFinite(cost) || cost < 0) throw new Error("Custo inválido.");
@@ -83,15 +88,21 @@ router.get("/stock/products", async (req, res) => {
       const product = productsById.get(Number(row.product_id)) || row;
       const cost = actualCost(product);
       const isKit = product.product_type === "kit" || row.product_type === "kit";
+      const total = isKit ? 0 : Number(row.on_hand || 0);
+      const rma = isKit ? 0 : rmaQuantity(product);
+      const available = isKit ? 0 : Number((total - rma).toFixed(4));
       return {
         ...row,
         actual_cost: cost,
         average_cost: cost,
-        on_hand: isKit ? 0 : Number(row.on_hand || 0),
+        total,
+        on_hand: total,
         reserved: isKit ? 0 : Number(row.reserved || 0),
-        available: isKit ? 0 : Number(row.available || 0),
-        stock_value: isKit ? 0 : Number((Number(row.on_hand || 0) * cost).toFixed(2)),
-        below_minimum: isKit ? false : Boolean(row.below_minimum),
+        rma,
+        rma_note: isKit ? null : (product?.metadata?.rma_note || null),
+        available,
+        stock_value: isKit ? 0 : Number((total * cost).toFixed(2)),
+        below_minimum: isKit ? false : available <= Number(row.minimum_stock || 0),
         patrimonial: !isKit
       };
     });
@@ -160,7 +171,8 @@ router.patch("/stock/products/:id/manual", async (req, res) => {
     }
 
     const balance = await getStockBalance(productId);
-    const previousQuantity = Number(balance.on_hand || 0);
+    const previousQuantity = Number(balance.total ?? balance.on_hand ?? 0);
+    const currentRma = rmaQuantity(product);
     const previousCost = actualCost(product);
     let quantityChanged = false;
     let costChanged = false;
@@ -168,6 +180,9 @@ router.patch("/stock/products/:id/manual", async (req, res) => {
     if (body.quantity != null) {
       const desiredQuantity = Number(body.quantity);
       if (!Number.isFinite(desiredQuantity)) throw new Error("Quantidade inválida.");
+      if (desiredQuantity >= 0 && desiredQuantity < currentRma) {
+        throw new Error(`O total não pode ficar abaixo do RMA atual (${currentRma}). Ajuste o RMA primeiro.`);
+      }
       const delta = Number((desiredQuantity - previousQuantity).toFixed(4));
       if (delta) {
         await createStockMovement({
@@ -209,6 +224,85 @@ router.patch("/stock/products/:id/manual", async (req, res) => {
 
     const saldo = await getStockBalance(productId);
     res.json({ sucesso: true, alterado: quantityChanged || costChanged, saldo });
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, mensagem: erro.message });
+  }
+});
+
+router.patch("/stock/products/:id/rma", async (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const body = req.body || {};
+    if (!productId) return res.status(400).json({ sucesso: false, mensagem: "Produto inválido." });
+
+    const { data: product, error: productError } = await supabase
+      .from("inventory_products")
+      .select("id,sku,name,product_type,metadata")
+      .eq("id", productId)
+      .single();
+    if (productError) throw new Error(productError.message);
+    if (["kit", "service"].includes(product.product_type)) {
+      return res.status(400).json({ sucesso: false, mensagem: "RMA só pode ser controlado em itens físicos." });
+    }
+
+    const balance = await getStockBalance(productId);
+    const total = Number(balance.total ?? balance.on_hand ?? 0);
+    const previousRma = rmaQuantity(product);
+    const desiredRma = Number(body.rma_quantity);
+    if (!Number.isFinite(desiredRma) || desiredRma < 0) {
+      return res.status(400).json({ sucesso: false, mensagem: "Quantidade de RMA inválida." });
+    }
+    if (total >= 0 && desiredRma > total) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: `RMA não pode ser maior que o total em estoque (${total}).`
+      });
+    }
+
+    const rmaNote = body.rma_note == null ? (product.metadata?.rma_note || null) : (String(body.rma_note).trim() || null);
+    const metadata = {
+      ...(product.metadata || {}),
+      rma_quantity: Number(desiredRma.toFixed(4)),
+      rma_note: rmaNote,
+      rma_updated_at: nowIso()
+    };
+
+    const update = await supabase
+      .from("inventory_products")
+      .update({ metadata, updated_at: nowIso() })
+      .eq("id", productId);
+    if (update.error) throw new Error(update.error.message);
+
+    const delta = Number((desiredRma - previousRma).toFixed(4));
+    if (delta || body.rma_note !== undefined) {
+      await createStockMovement({
+        productId,
+        quantity: 0,
+        movementType: "rma_transfer",
+        unitCost: null,
+        referenceType: "manual_rma",
+        referenceId: crypto.randomUUID(),
+        idempotencyKey: `rma:${crypto.randomUUID()}`,
+        notes: rmaNote || (delta > 0 ? "Transferência para RMA" : delta < 0 ? "Retorno do RMA" : "Atualização da observação do RMA"),
+        metadata: {
+          previous_rma: previousRma,
+          new_rma: desiredRma,
+          rma_delta: delta,
+          total,
+          available_after: Number((total - desiredRma).toFixed(4))
+        }
+      });
+    }
+
+    const saldo = await getStockBalance(productId);
+    res.json({
+      sucesso: true,
+      saldo,
+      rma: desiredRma,
+      rma_note: rmaNote,
+      total,
+      available: Number((total - desiredRma).toFixed(4))
+    });
   } catch (erro) {
     res.status(500).json({ sucesso: false, mensagem: erro.message });
   }
