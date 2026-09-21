@@ -98,7 +98,7 @@ async function sendLoaded(){
  }
  W.busySend=false;refresh();if(typeof toast==='function')toast('Envio concluído: '+ok+' enviado'+(ok===1?'':'s')+(err?' · '+err+' com erro':'' )+'.',err?'bad':'ok');if(errors.length)console.error('[FISCAL XML ML]',errors);
 }
-function observe(){const tbody=document.getElementById('tbody');if(tbody)new MutationObserver(()=>setTimeout(refresh,0)).observe(tbody,{childList:true,subtree:true});document.addEventListener('change',e=>{if(e.target.matches('.row-select,.select-all'))setTimeout(refresh,0)})}
+function observe(){const tbody=document.getElementById('tbody');if(tbody)new MutationObserver(()=>setTimeout(refresh,0)).observe(tbody,{childList:true,subtree:false});document.addEventListener('change',e=>{if(e.target.matches('.row-select,.select-all'))setTimeout(refresh,0)})}
 function init(){ensure();observe();refresh()}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
 })();
