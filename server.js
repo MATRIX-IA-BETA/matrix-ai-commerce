@@ -67,6 +67,7 @@ function sendMatrixPage(fileName) {
           "</head>",
           `
 <script defer src="/fiscal-marketplace-links.js?v=1"></script>
+<script defer src="/fiscal-xml-batch.js?v=1"></script>
 </head>`
         );
       }
