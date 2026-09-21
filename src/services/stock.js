@@ -10,23 +10,54 @@ function actualCost(product) {
   return 0;
 }
 
-async function getStockBalance(productId) {
-  const { data, error } = await supabase
-    .from("inventory_stock")
-    .select("*")
-    .eq("product_id", productId)
-    .maybeSingle();
+function rmaQuantity(product) {
+  const parsed = Number(product?.metadata?.rma_quantity || 0);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
 
-  if (error) {
-    throw new Error(`Erro consultando saldo: ${error.message}`);
+function withRmaBalance(balance, product) {
+  const total = Number(balance?.on_hand || 0);
+  const rma = rmaQuantity(product);
+  return {
+    ...(balance || {}),
+    product_id: Number(balance?.product_id || product?.id || 0),
+    total,
+    on_hand: total,
+    rma,
+    rma_note: product?.metadata?.rma_note || null,
+    available: Number((total - rma).toFixed(4))
+  };
+}
+
+async function getStockBalance(productId) {
+  const [stockResult, productResult] = await Promise.all([
+    supabase
+      .from("inventory_stock")
+      .select("*")
+      .eq("product_id", productId)
+      .maybeSingle(),
+    supabase
+      .from("inventory_products")
+      .select("id,metadata")
+      .eq("id", productId)
+      .maybeSingle()
+  ]);
+
+  if (stockResult.error) {
+    throw new Error(`Erro consultando saldo: ${stockResult.error.message}`);
+  }
+  if (productResult.error) {
+    throw new Error(`Erro consultando RMA do produto: ${productResult.error.message}`);
   }
 
-  return data || {
+  const balance = stockResult.data || {
     product_id: productId,
     on_hand: 0,
     reserved: 0,
     available: 0
   };
+
+  return withRmaBalance(balance, productResult.data || { id: productId, metadata: {} });
 }
 
 async function getProduct(productId) {
@@ -63,16 +94,29 @@ async function getBalancesByIds(ids) {
   const uniqueIds = [...new Set((ids || []).map(Number).filter(Boolean))];
   if (!uniqueIds.length) return new Map();
 
-  const { data, error } = await supabase
-    .from("inventory_stock")
-    .select("product_id,on_hand,reserved,available")
-    .in("product_id", uniqueIds);
+  const [stockResult, productResult] = await Promise.all([
+    supabase
+      .from("inventory_stock")
+      .select("product_id,on_hand,reserved,available")
+      .in("product_id", uniqueIds),
+    supabase
+      .from("inventory_products")
+      .select("id,metadata")
+      .in("id", uniqueIds)
+  ]);
 
-  if (error) {
-    throw new Error(`Erro consultando saldos do kit: ${error.message}`);
+  if (stockResult.error) {
+    throw new Error(`Erro consultando saldos do kit: ${stockResult.error.message}`);
+  }
+  if (productResult.error) {
+    throw new Error(`Erro consultando RMA dos componentes: ${productResult.error.message}`);
   }
 
-  return new Map((data || []).map(row => [Number(row.product_id), row]));
+  const products = new Map((productResult.data || []).map(row => [Number(row.id), row]));
+  return new Map((stockResult.data || []).map(row => {
+    const id = Number(row.product_id);
+    return [id, withRmaBalance(row, products.get(id) || { id, metadata: {} })];
+  }));
 }
 
 async function readBomDefinition(parentProductId) {
