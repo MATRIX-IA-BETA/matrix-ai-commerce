@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Matrix AI | Mercado Ads</title>
+<style>
+:root{--bg:#07111f;--panel:#0c1729;--panel2:#101d33;--line:#223b5e;--line2:#31547d;--text:#eef5ff;--muted:#91a8c7;--blue:#2784ff;--green:#29df91;--yellow:#f7bf27;--red:#ff6679;--purple:#7c6cff}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;font-family:Inter,Segoe UI,Arial,sans-serif;background:linear-gradient(180deg,#07101f,#081425 58%,#07101d);color:var(--text)}
+button,select,input{font:inherit}
+button{cursor:pointer}
+.page{padding:16px 22px 28px;display:flex;flex-direction:column;gap:14px}
+.top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+h1{font-size:28px;margin:0 0 5px}.subtitle{color:#9db4d2;font-size:13px}.live{display:flex;align-items:center;gap:8px;color:#b9cbe2;font-size:12px;margin-top:7px}.dot{width:9px;height:9px;border-radius:50%;background:#34e79b;box-shadow:0 0 12px rgba(52,231,155,.65)}
+.controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.controls select,.controls button{border:1px solid #2b4b70;background:#0e1c31;color:#fff;border-radius:10px;padding:10px 13px}.controls button.primary{background:linear-gradient(180deg,#2f86ef,#1763bf);border-color:#4a9cff;font-weight:800}.controls button.sync{background:linear-gradient(180deg,#6757e9,#4d40c4);border-color:#7f70ff;font-weight:800}.controls button:disabled{opacity:.5;cursor:not-allowed}
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(130px,1fr));gap:10px}.card{border:1px solid var(--line);background:linear-gradient(180deg,#0c182b,#091422);border-radius:14px;padding:13px}.kpi .label{color:#a7bad3;font-size:11px;text-transform:uppercase;letter-spacing:.6px}.kpi strong{display:block;font-size:23px;margin-top:6px}.kpi small{display:block;color:#7f97b7;font-size:11px;margin-top:4px}
+.grid2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr);gap:12px}.section-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.section-title h2{font-size:16px;margin:0}.section-title span{font-size:11px;color:#8da5c4}
+.insights{display:grid;gap:8px}.insight{padding:10px 12px;border:1px solid #29496f;background:#0e1d33;border-radius:10px;font-size:12px;line-height:1.45}.insight b{color:#dbeaff}.insight.good{border-color:#1b7453;background:#0d2b22}.insight.warn{border-color:#6d5b18;background:#29240f}.insight.bad{border-color:#7a3140;background:#30151e}
+.chart-wrap{height:250px;display:flex;align-items:center;justify-content:center}.chart-empty{color:#8ca3c2;font-size:13px;text-align:center;padding:40px}
+svg{width:100%;height:230px;overflow:visible}.axis{stroke:#2b4567;stroke-width:1}.label-svg{fill:#8fa9c9;font-size:10px}.bar-cost{fill:#6b5cff}.bar-revenue{fill:#3197ff}
+.legend{display:flex;gap:16px;color:#9fb4d0;font-size:11px;margin-top:3px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}.legend .cost{background:#6b5cff}.legend .revenue{background:#3197ff}
+.table-card{padding:0;overflow:hidden}.table-head{padding:13px 15px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}.table-head h2{font-size:16px;margin:0}.table-head span{font-size:11px;color:#8ca3c2}.scroll{overflow:auto;max-height:480px}table{width:100%;border-collapse:collapse;font-size:12px;min-width:1080px}th,td{padding:9px 10px;border-bottom:1px solid #172c48;text-align:left;white-space:nowrap}th{position:sticky;top:0;background:#0d1a2e;color:#90a7c5;font-size:10px;text-transform:uppercase;letter-spacing:.4px;z-index:2}td.num,th.num{text-align:right}.status{display:inline-flex;padding:4px 8px;border-radius:999px;border:1px solid #355677;font-size:10px}.status.active{color:#64e8ad;border-color:#2a8b63;background:#0e3428}.status.paused{color:#ffd66d;border-color:#7b641d;background:#302810}.target-ok{color:#52e3a3;font-weight:800}.target-bad{color:#ff8798;font-weight:800}.muted{color:#8ba2bf}.link{color:#66b0ff;background:none;border:0;padding:0;text-decoration:underline}
+.error{display:none;border:1px solid #753342;background:#31161f;color:#ffc0c8;border-radius:10px;padding:11px 13px;font-size:12px}.error.show{display:block}
+.modal{position:fixed;inset:0;background:rgba(2,8,18,.72);z-index:120000;display:none;align-items:center;justify-content:center;padding:18px}.modal.show{display:flex}.modal-box{width:min(760px,95vw);max-height:88vh;overflow:auto;background:#0b1728;border:1px solid #31547d;border-radius:16px;padding:17px}.modal-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.modal-head h3{margin:0;font-size:18px}.close{border:1px solid #355578;background:#10203a;color:#fff;border-radius:9px;padding:8px 10px}.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:14px}.detail{border:1px solid #233e60;background:#0d1b30;border-radius:10px;padding:11px}.detail small{color:#8fa7c6}.detail b{display:block;margin-top:5px;font-size:16px}
+@media(max-width:1250px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
+@media(max-width:720px){.page{padding:12px}.top{flex-direction:column}.controls{justify-content:flex-start}.kpis{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <div>
+      <h1>Mercado Ads</h1>
+      <div class="subtitle">Product Ads ao vivo: investimento, retorno, campanhas e Ad Groups.</div>
+      <div class="live"><span class="dot"></span><span id="liveText">Conectando ao Mercado Ads...</span></div>
+    </div>
+    <div class="controls">
+      <select id="days">
+        <option value="7">7 dias</option>
+        <option value="14">14 dias</option>
+        <option value="30" selected>30 dias</option>
+        <option value="60">60 dias</option>
+        <option value="90">90 dias</option>
+      </select>
+      <button id="reload" class="primary">Atualizar ao vivo</button>
+      <button id="sync" class="sync">Sincronizar histórico</button>
+    </div>
+  </div>
+
+  <div id="error" class="error"></div>
+
+  <section class="kpis">
+    <div class="card kpi"><div class="label">Investimento</div><strong id="cost">—</strong><small>custo dos cliques</small></div>
+    <div class="card kpi"><div class="label">Receita via Ads</div><strong id="revenue">—</strong><small>direta + indireta</small></div>
+    <div class="card kpi"><div class="label">ROAS</div><strong id="roas">—</strong><small>retorno por R$ 1 investido</small></div>
+    <div class="card kpi"><div class="label">ACOS</div><strong id="acos">—</strong><small>Ads / receita atribuída</small></div>
+    <div class="card kpi"><div class="label">Cliques</div><strong id="clicks">—</strong><small id="cpc">CPC —</small></div>
+    <div class="card kpi"><div class="label">Impressões</div><strong id="prints">—</strong><small id="ctr">CTR —</small></div>
+
+    <div class="card kpi"><div class="label">Unidades via Ads</div><strong id="units">—</strong><small id="cvr">CVR —</small></div>
+    <div class="card kpi"><div class="label">Venda direta</div><strong id="direct">—</strong><small>após clique no mesmo produto</small></div>
+    <div class="card kpi"><div class="label">Venda indireta</div><strong id="indirect">—</strong><small>outros produtos após clique</small></div>
+    <div class="card kpi"><div class="label">Venda orgânica</div><strong id="organic">—</strong><small>publicações promovidas sem Ads</small></div>
+    <div class="card kpi"><div class="label">SOV</div><strong id="sov">—</strong><small>participação das vendas via Ads</small></div>
+    <div class="card kpi"><div class="label">TACOS</div><strong id="tacos">—</strong><small>investimento / venda total</small></div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="section-title"><div><h2>Histórico diário</h2><span>Receita atribuída x investimento</span></div><span id="historyLabel">—</span></div>
+      <div id="chart" class="chart-wrap"><div class="chart-empty">Sincronize o histórico para visualizar a série diária.</div></div>
+      <div class="legend"><span><i class="cost"></i>Investimento</span><span><i class="revenue"></i>Receita atribuída</span></div>
+    </div>
+    <div class="card">
+      <div class="section-title"><div><h2>Panorama Matrix</h2><span>Leitura baseada no próprio ROAS alvo das campanhas</span></div></div>
+      <div id="insights" class="insights"><div class="insight">Carregando campanhas...</div></div>
+    </div>
+  </section>
+
+  <section class="card table-card">
+    <div class="table-head"><h2>Campanhas</h2><span id="campaignCount">—</span></div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Campanha</th><th>Status</th><th>Estratégia</th><th class="num">Orçamento</th><th class="num">ROAS alvo</th>
+          <th class="num">Gasto</th><th class="num">Receita Ads</th><th class="num">ROAS</th><th class="num">ACOS</th>
+          <th class="num">CTR</th><th class="num">CVR</th><th class="num">Unid.</th><th class="num">SOV</th><th></th>
+        </tr></thead>
+        <tbody id="campaignRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card table-card">
+    <div class="table-head"><h2>Ad Groups</h2><span id="adgroupCount">—</span></div>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Ad Group / Produto</th><th>Campanha</th><th>Status</th><th class="num">Gasto</th><th class="num">Receita</th>
+          <th class="num">ROAS</th><th class="num">ACOS</th><th class="num">TACOS</th><th class="num">CTR</th><th class="num">CVR</th>
+          <th class="num">Cliques</th><th class="num">Impressões</th><th class="num">Unid.</th>
+        </tr></thead>
+        <tbody id="adgroupRows"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <div class="modal-head"><div><h3 id="modalTitle">Campanha</h3><div class="muted" id="modalSub"></div></div><button class="close" id="closeModal">Fechar</button></div>
+    <div class="detail-grid" id="detailGrid"></div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const BRL=new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL"});
+const INT=new Intl.NumberFormat("pt-BR",{maximumFractionDigits:0});
+const fmtMoney=v=>Number.isFinite(Number(v))?BRL.format(Number(v)):"—";
+const fmtNum=v=>Number.isFinite(Number(v))?INT.format(Number(v)):"—";
+const fmtPct=v=>Number.isFinite(Number(v))?Number(v).toFixed(2)+"%":"—";
+const fmtX=v=>Number.isFinite(Number(v))?Number(v).toFixed(2)+"x":"—";
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let state={summary:null,daily:[]};
+
+function showError(message){
+  const e=$("error");
+  if(!message){e.className="error";e.textContent="";return}
+  e.className="error show";e.textContent=message;
+}
+
+async function api(url,opts={}){
+  const r=await fetch(url,{cache:"no-store",...opts,headers:{"Content-Type":"application/json",...(opts.headers||{})}});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||("HTTP "+r.status));
+  return d;
+}
+
+function metric(){
+  return state.summary?.metrics||{};
+}
+
+function renderKpis(){
+  const m=metric(),a=state.summary?.ad_groups_metrics||{};
+  $("cost").textContent=fmtMoney(m.cost);
+  $("revenue").textContent=fmtMoney(m.total_amount);
+  $("roas").textContent=fmtX(m.roas);
+  $("acos").textContent=fmtPct(m.acos);
+  $("clicks").textContent=fmtNum(m.clicks);
+  $("prints").textContent=fmtNum(m.prints);
+  $("cpc").textContent="CPC "+fmtMoney(m.cpc);
+  $("ctr").textContent="CTR "+fmtPct(m.ctr);
+  $("units").textContent=fmtNum(m.units_quantity);
+  $("cvr").textContent="CVR "+fmtPct(m.cvr);
+  $("direct").textContent=fmtMoney(m.direct_amount);
+  $("indirect").textContent=fmtMoney(m.indirect_amount);
+  $("organic").textContent=fmtMoney(m.organic_units_amount);
+  $("sov").textContent=fmtPct(a.sov??m.sov);
+  $("tacos").textContent=fmtPct(a.tacos??m.tacos);
+}
+
+function renderInsights(){
+  const campaigns=state.summary?.campaigns||[];
+  const withSpend=campaigns.filter(c=>Number(c.metrics?.cost||0)>0);
+  const withTarget=withSpend.filter(c=>Number(c.roas_target||0)>0);
+  const above=withTarget.filter(c=>Number(c.metrics?.roas||0)>=Number(c.roas_target||0));
+  const below=withTarget.filter(c=>Number(c.metrics?.roas||0)<Number(c.roas_target||0));
+  const strong=withTarget.filter(c=>Number(c.metrics?.roas||0)>=Number(c.roas_target||0)*1.2);
+  const spend=Number(metric().cost||0),rev=Number(metric().total_amount||0);
+  const lines=[];
+
+  if(!withSpend.length){
+    lines.push({cls:"warn",html:"<b>Sem investimento no período.</b> As campanhas não retornaram gasto de Product Ads."});
+  }else{
+    lines.push({cls:above.length>=below.length?"good":"warn",html:`<b>${above.length} de ${withTarget.length} campanhas com gasto estão no ou acima do próprio ROAS alvo.</b> ${below.length} estão abaixo do alvo configurado.`});
+    if(strong.length){
+      const top=strong.sort((a,b)=>Number(b.metrics.roas)-Number(a.metrics.roas)).slice(0,3).map(c=>esc(c.name)).join(", ");
+      lines.push({cls:"good",html:`<b>Candidatas a ganhar orçamento:</b> ${top}. Estão pelo menos 20% acima do ROAS alvo no período.`});
+    }
+    if(below.length){
+      const weak=below.sort((a,b)=>Number(b.metrics.cost)-Number(a.metrics.cost)).slice(0,3).map(c=>esc(c.name)).join(", ");
+      lines.push({cls:"bad",html:`<b>Primeiro ponto para revisar:</b> ${weak}. São campanhas com gasto e ROAS abaixo do alvo.`});
+    }
+    if(spend>0&&rev>0){
+      lines.push({cls:"",html:`<b>Eficiência consolidada:</b> cada R$ 1 investido gerou ${fmtX(metric().roas)} em receita atribuída; ACOS de ${fmtPct(metric().acos)}.`});
+    }
+  }
+
+  const ag=state.summary?.ad_groups_metrics;
+  if(ag&&Number.isFinite(Number(ag.tacos))){
+    lines.push({cls:"",html:`<b>Dependência de mídia:</b> TACOS ${fmtPct(ag.tacos)} e SOV ${fmtPct(ag.sov)} nos Ad Groups. Use isso junto da margem para decidir até onde escalar.`});
+  }
+
+  $("insights").innerHTML=lines.map(x=>`<div class="insight ${x.cls||""}">${x.html}</div>`).join("");
+}
+
+function renderCampaigns(){
+  const rows=[...(state.summary?.campaigns||[])].sort((a,b)=>Number(b.metrics?.cost||0)-Number(a.metrics?.cost||0));
+  $("campaignCount").textContent=rows.length+" campanhas";
+  $("campaignRows").innerHTML=rows.length?rows.map(c=>{
+    const roas=Number(c.metrics?.roas||0),target=Number(c.roas_target||0);
+    const targetClass=target>0?(roas>=target?"target-ok":"target-bad"):"";
+    return `<tr>
+      <td><b>${esc(c.name)}</b><div class="muted">#${esc(c.id)}</div></td>
+      <td><span class="status ${esc(c.status||"")}">${esc(c.status||"—")}</span></td>
+      <td>${esc(c.strategy||"—")}</td>
+      <td class="num">${fmtMoney(c.budget)}</td>
+      <td class="num">${target>0?fmtX(target):"—"}</td>
+      <td class="num">${fmtMoney(c.metrics?.cost)}</td>
+      <td class="num">${fmtMoney(c.metrics?.total_amount)}</td>
+      <td class="num ${targetClass}">${fmtX(roas)}</td>
+      <td class="num">${fmtPct(c.metrics?.acos)}</td>
+      <td class="num">${fmtPct(c.metrics?.ctr)}</td>
+      <td class="num">${fmtPct(c.metrics?.cvr)}</td>
+      <td class="num">${fmtNum(c.metrics?.units_quantity)}</td>
+      <td class="num">${fmtPct(c.metrics?.sov)}</td>
+      <td><button class="link" data-campaign="${esc(c.id)}">Detalhes</button></td>
+    </tr>`
+  }).join(""):'<tr><td colspan="14" class="muted">Nenhuma campanha retornada.</td></tr>';
+}
+
+function renderAdGroups(){
+  const rows=[...(state.summary?.ad_groups||[])].sort((a,b)=>Number(b.metrics?.cost||0)-Number(a.metrics?.cost||0));
+  $("adgroupCount").textContent=rows.length+" grupos";
+  $("adgroupRows").innerHTML=rows.length?rows.slice(0,100).map(g=>`<tr>
+    <td><b>${esc(g.name||("Ad Group #"+g.id))}</b><div class="muted">${g.item_id?"Item "+esc(g.item_id):g.user_product_id?"UP "+esc(g.user_product_id):"#"+esc(g.id)}</div></td>
+    <td>${esc(g.campaign_id||"—")}</td>
+    <td><span class="status ${esc(g.status||"")}">${esc(g.status||"—")}</span></td>
+    <td class="num">${fmtMoney(g.metrics?.cost)}</td>
+    <td class="num">${fmtMoney(g.metrics?.total_amount)}</td>
+    <td class="num">${fmtX(g.metrics?.roas)}</td>
+    <td class="num">${fmtPct(g.metrics?.acos)}</td>
+    <td class="num">${fmtPct(g.metrics?.tacos)}</td>
+    <td class="num">${fmtPct(g.metrics?.ctr)}</td>
+    <td class="num">${fmtPct(g.metrics?.cvr)}</td>
+    <td class="num">${fmtNum(g.metrics?.clicks)}</td>
+    <td class="num">${fmtNum(g.metrics?.prints)}</td>
+    <td class="num">${fmtNum(g.metrics?.units_quantity)}</td>
+  </tr>`).join(""):'<tr><td colspan="13" class="muted">Nenhum Ad Group retornado.</td></tr>';
+}
+
+function renderChart(){
+  const rows=state.daily||[];
+  $("historyLabel").textContent=rows.length?rows.length+" dias armazenados":"sem histórico";
+  if(!rows.length){
+    $("chart").innerHTML='<div class="chart-empty">Clique em <b>Sincronizar histórico</b> para gravar as métricas diárias e acompanhar tendência.</div>';
+    return;
+  }
+  const width=900,height=210,pad=30;
+  const max=Math.max(1,...rows.flatMap(r=>[Number(r.cost||0),Number(r.total_amount||0)]));
+  const group=(width-pad*2)/rows.length;
+  const bw=Math.max(2,group*.28);
+  let bars='',labels='';
+  rows.forEach((r,i)=>{
+    const x=pad+i*group+group*.18;
+    const hc=(Number(r.cost||0)/max)*(height-pad*2);
+    const hr=(Number(r.total_amount||0)/max)*(height-pad*2);
+    bars+=`<rect class="bar-cost" x="${x}" y="${height-pad-hc}" width="${bw}" height="${hc}" rx="2"></rect>`;
+    bars+=`<rect class="bar-revenue" x="${x+bw+2}" y="${height-pad-hr}" width="${bw}" height="${hr}" rx="2"></rect>`;
+    if(i===0||i===rows.length-1||i%Math.max(1,Math.ceil(rows.length/6))===0){
+      labels+=`<text class="label-svg" x="${x}" y="${height-7}">${esc(String(r.date).slice(5))}</text>`;
+    }
+  });
+  $("chart").innerHTML=`<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"><line class="axis" x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}"></line>${bars}${labels}</svg>`;
+}
+
+async function openCampaign(id){
+  try{
+    showError("");
+    const days=$("days").value;
+    const d=await api(`/api/ads/campaigns/${encodeURIComponent(id)}?days=${encodeURIComponent(days)}`);
+    const c=d.campaign||{},m=c.metrics||{};
+    $("modalTitle").textContent=c.name||("Campanha #"+id);
+    $("modalSub").textContent=[c.strategy,c.status,c.roas_target?"ROAS alvo "+fmtX(c.roas_target):""].filter(Boolean).join(" · ");
+    const items=[
+      ["ROAS",fmtX(m.roas)],["ACOS",fmtPct(m.acos)],["Benchmark ACOS",fmtPct(m.acos_benchmark)],
+      ["Impression Share",fmtPct(m.impression_share)],["Top Impression Share",fmtPct(m.top_impression_share)],["Perdida por orçamento",fmtPct(m.lost_impression_share_by_budget)],
+      ["Perdida por ranking",fmtPct(m.lost_impression_share_by_ad_rank)],["Investimento",fmtMoney(m.cost)],["Receita Ads",fmtMoney(m.total_amount)]
+    ];
+    $("detailGrid").innerHTML=items.map(x=>`<div class="detail"><small>${esc(x[0])}</small><b>${esc(x[1])}</b></div>`).join("");
+    $("modal").classList.add("show");
+  }catch(e){showError(e.message)}
+}
+
+async function load(){
+  const reload=$("reload"),sync=$("sync"),days=$("days").value;
+  reload.disabled=true;sync.disabled=true;showError("");$("liveText").textContent="Consultando Mercado Ads ao vivo...";
+  try{
+    const [summary,daily]=await Promise.all([
+      api(`/api/ads/summary?days=${encodeURIComponent(days)}`),
+      api(`/api/ads/daily?days=${encodeURIComponent(days)}`).catch(()=>({daily:[]}))
+    ]);
+    state.summary=summary;state.daily=daily.daily||[];
+    renderKpis();renderInsights();renderCampaigns();renderAdGroups();renderChart();
+    const a=summary.advertiser;
+    $("liveText").textContent=`${a?.account_name||a?.advertiser_name||"Mercado Ads"} · ${summary.range?.dateFrom||""} a ${summary.range?.dateTo||""}`;
+  }catch(e){
+    showError(e.message);$("liveText").textContent="Falha ao consultar Mercado Ads";
+  }finally{reload.disabled=false;sync.disabled=false}
+}
+
+async function syncHistory(){
+  const btn=$("sync"),days=$("days").value,old=btn.textContent;
+  btn.disabled=true;btn.textContent="Sincronizando...";
+  try{
+    const d=await api("/api/ads/sync",{method:"POST",body:JSON.stringify({days:Number(days)})});
+    $("liveText").textContent=`Histórico sincronizado: ${d.records_saved||0} registros`;
+    await load();
+  }catch(e){showError(e.message)}finally{btn.disabled=false;btn.textContent=old}
+}
+
+$("reload").onclick=load;
+$("sync").onclick=syncHistory;
+$("days").onchange=load;
+$("campaignRows").addEventListener("click",e=>{const b=e.target.closest("[data-campaign]");if(b)openCampaign(b.dataset.campaign)});
+$("closeModal").onclick=()=>$("modal").classList.remove("show");
+$("modal").onclick=e=>{if(e.target===$("modal"))$("modal").classList.remove("show")};
+load();
+</script>
+</body>
+</html>
