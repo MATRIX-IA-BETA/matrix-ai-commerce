@@ -42,7 +42,7 @@ installBlingNfePutPreserve();
 const PUBLIC_DIR = path.join(__dirname, "src", "public");
 const MATRIX_NAV_ASSETS = `
 <link rel="stylesheet" href="/matrix-global-nav.css?v=4">
-<script defer src="/matrix-global-nav.js?v=9"></script>
+<script defer src="/matrix-global-nav.js?v=10"></script>
 <script defer src="/matrix-voice.js?v=1"></script>
 `;
 
@@ -171,6 +171,11 @@ app.get("/mercadolivre", sendMatrixPage("mercadolivre-painel.html"));
 app.get("/painel/mercadolivre", sendMatrixPage("mercadolivre-painel.html"));
 app.get("/mercadolivre-painel.html", sendMatrixPage("mercadolivre-painel.html"));
 
+// Mercado Ads Product Ads.
+app.get("/ads", sendMatrixPage("mercado-ads.html"));
+app.get("/mercado-ads", sendMatrixPage("mercado-ads.html"));
+app.get("/mercado-ads.html", sendMatrixPage("mercado-ads.html"));
+
 // Arquivos estáticos auxiliares (CSS/JS/etc.). O index fica desativado aqui
 // porque a rota / acima injeta a navegação global antes de entregar a home.
 app.use(express.static(PUBLIC_DIR, { index: false }));
@@ -185,6 +190,7 @@ app.use(require("./src/routes/webhooks-mercadolivre"));
 // precisa ter a primeira chance de capturar apenas os states prefixados mp_.
 app.use(require("./src/routes/finance-ml-funds"));
 app.use(require("./src/routes/mercadolivre"));
+app.use(require("./src/routes/mercado-ads"));
 app.use(require("./src/routes/sac"));
 app.use(require("./src/routes/ml-sac-history-links"));
 app.use(require("./src/routes/ml-sac-live-filter-v2"));
