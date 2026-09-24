@@ -386,6 +386,59 @@ async function persistDailyMetrics(supabase, records) {
   );
 }
 
+async function mergeStoredAdsDaily(supabase, records, startDate) {
+  const { data, error } = await supabase
+    .from("marketplace_ads_daily")
+    .select("date,spend,attributed_revenue")
+    .eq("marketplace", DEFAULT_MARKETPLACE)
+    .eq("level", "campaign")
+    .gte("date", String(startDate).slice(0, 10))
+    .order("date", { ascending: true });
+
+  if (error) {
+    // Ads é complementar: não derruba o Analytics principal se a tabela ainda
+    // não estiver disponível em algum ambiente.
+    console.warn("Analytics sem Mercado Ads:", error.message);
+    return records;
+  }
+
+  const adsByDate = new Map();
+
+  for (const row of data || []) {
+    const key = String(row.date || "").slice(0, 10);
+    if (!key) continue;
+
+    if (!adsByDate.has(key)) {
+      adsByDate.set(key, { spend: 0, revenue: 0 });
+    }
+
+    const item = adsByDate.get(key);
+    item.spend += toNumber(row.spend);
+    item.revenue += toNumber(row.attributed_revenue);
+  }
+
+  return records.map(row => {
+    const key = String(row.date || "").slice(0, 10);
+    const ads = adsByDate.get(key);
+
+    if (!ads) return row;
+
+    return {
+      ...row,
+      ads_spend: roundMoney(ads.spend),
+      ads_cost: roundMoney(ads.spend),
+      acos_percent:
+        ads.revenue > 0
+          ? roundMoney((ads.spend / ads.revenue) * 100)
+          : 0,
+      roas:
+        ads.spend > 0
+          ? roundMoney(ads.revenue / ads.spend)
+          : 0
+    };
+  });
+}
+
 function aggregateDaily(records) {
   let netRevenueComplete = true;
   const totals = {
@@ -571,6 +624,8 @@ async function loadExecutive(supabase, days = 30, options = {}) {
     daily = rebuiltResult.daily;
     rebuilt = true;
   }
+
+  daily = await mergeStoredAdsDaily(supabase, daily, start);
 
   const totals = aggregateDaily(daily);
   const accountIds = Array.from(new Set(daily.map(row => row.account_id).filter(Boolean)));
