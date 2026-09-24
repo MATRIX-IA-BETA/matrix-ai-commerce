@@ -455,6 +455,7 @@ async function getCampaignDaily({
     `/advertising/${adsContext.advertiser.site_id}/product_ads/campaigns/${encodeURIComponent(String(campaignId))}?${params.toString()}`;
 
   const fetched = await adsFetch(path, adsContext.account, 2);
+  adsContext.account = fetched.account;
 
   return {
     advertiser: adsContext.advertiser,
@@ -519,8 +520,7 @@ function normalizeAdGroup(row) {
       sov: toNumber(metrics.sov),
       cvr: toNumber(metrics.cvr),
       roas: toNumber(metrics.roas)
-    },
-    raw: row
+    }
   };
 }
 
