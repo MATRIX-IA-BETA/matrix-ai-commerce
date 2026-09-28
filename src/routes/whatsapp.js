@@ -2327,25 +2327,3 @@ try {
 }
 
 module.exports = router;
-
-
-      // Mark queue notice as sent so no auto-notice fires
-      if (conversationId) {
-        try {
-          await supabaseRest(
-            `sac_conversations?id=eq.${encodeURIComponent(conversationId)}`,
-            {
-              method: "PATCH",
-              headers: {
-                Prefer: "return=minimal"
-              },
-              body: JSON.stringify({
-                human_queue_notice_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              })
-            }
-          );
-        } catch (e) {
-          console.warn("Could not update human_queue_notice_at:", e.message);
-        }
-      }
