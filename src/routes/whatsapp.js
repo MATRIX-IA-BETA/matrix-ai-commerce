@@ -371,6 +371,12 @@ async function iniciarVerificadorFilaHumana() {
   }, 30000);
 }
 
+function precisaSupabase() {
+  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
+    throw new Error("Supabase não configurado: faltam SUPABASE_URL ou SUPABASE_SECRET_KEY.");
+  }
+}
+
 async function supabaseRest(path, options = {}) {
   precisaSupabase();
 
@@ -1806,6 +1812,11 @@ router.post(
               }
             );
 
+            const historico =
+              await buscarHistorico(
+                conversa.id
+              );
+
             // TREINAMENTO AO VIVO PELO WHATSAPP DO ADMIN
             if (
               ehComandoDeTreinamento(
@@ -2019,10 +2030,6 @@ Gere apenas a pergunta, sem introdução. Seja conciso e prático.`;
                 continue;
               }
             }
-const historico =
-              await buscarHistorico(
-                conversa.id
-              );
 
             // Se o próprio cliente confirmou que resolveu,
             // transforma esse atendimento em experiência operacional.
