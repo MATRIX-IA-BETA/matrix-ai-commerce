@@ -240,6 +240,7 @@ PRINCÍPIOS:
 - NUNCA diga que o cliente foi "encaminhado" ou que "estou passando" para humano a menos que control_mode tenha REALMENTE sido alterado para 'human' e a mudança foi confirmada no sistema.
 - Se o cliente pedir humano, a resposta é: uma pergunta esclarecedora (primeira vez) ou transferência confirmada com timestamp (segunda vez).
 - Não falsifique promessas de escalação que não ocorreram.
+- O número de protocolo fornecido pelo sistema é um dado oficial e imutável deste atendimento. Se o cliente pedir o protocolo, informe EXATAMENTE o valor fornecido em "PROTOCOLO DO ATENDIMENTO". Nunca invente, altere ou diga que não existe quando o sistema tiver fornecido um número.
 `;
 
 
@@ -268,7 +269,7 @@ function reconhecerPedidoDeHumano(texto) {
 
 async function obterConversaCompleta(conversationId) {
   const data = await supabaseRest(
-    `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status,control_mode,human_request_count,human_takeover_at,requires_review,attention_level&limit=1`
+    `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status,control_mode,human_request_count,human_takeover_at,requires_review,attention_level,protocol_number&limit=1`
   );
   
   return Array.isArray(data) && data[0] ? data[0] : null;
@@ -287,7 +288,7 @@ async function atualizarControleConversa(conversationId, updates) {
   );
 }
 
-async function notificarAdminsHumanHandoff(conversationId, customerName, lastFourDigits, lastMessage) {
+async function notificarAdminsHumanHandoff(conversationId, customerName, lastFourDigits, lastMessage, protocolNumber) {
   const MATRIX_ADMIN_WHATSAPPS_LIST = listaNumeros(MATRIX_ADMIN_WHATSAPPS);
   
   if (!MATRIX_ADMIN_WHATSAPPS_LIST || MATRIX_ADMIN_WHATSAPPS_LIST.length === 0) {
@@ -295,7 +296,7 @@ async function notificarAdminsHumanHandoff(conversationId, customerName, lastFou
     return;
   }
   
-  const mensagem = `🚨 ATENDIMENTO HUMANO ACIONADO\n\nCliente: ${customerName || "Desconhecido"} (*${lastFourDigits})\nÚltima mensagem: ${lastMessage.substring(0, 100)}\n\nA IA foi bloqueada. Assuma o atendimento na SAC Central.`;
+  const mensagem = `🚨 ATENDIMENTO HUMANO ACIONADO\n\nCliente: ${customerName || "Desconhecido"} (*${lastFourDigits})\nProtocolo: ${protocolNumber || "não disponível"}\nÚltima mensagem: ${lastMessage.substring(0, 100)}\n\nA IA foi bloqueada. Assuma o atendimento na SAC Central.`;
   
   for (const numeroAdmin of MATRIX_ADMIN_WHATSAPPS_LIST) {
     try {
@@ -421,7 +422,7 @@ async function obterOuCriarConversa({
   const numero = limparNumero(telefone);
 
   const existente = await supabaseRest(
-    `sac_conversations?channel=eq.whatsapp&external_user_id=eq.${encodeURIComponent(numero)}&select=id,external_user_id,contact_name,status,last_message_at&limit=1`
+    `sac_conversations?channel=eq.whatsapp&external_user_id=eq.${encodeURIComponent(numero)}&select=id,external_user_id,contact_name,status,last_message_at,protocol_number&limit=1`
   );
 
   if (Array.isArray(existente) && existente[0]) {
@@ -609,7 +610,8 @@ async function gerarRespostaIA({
   experiencias,
   memoriaPessoal = [],
   memoriaCompartilhada = [],
-  userType = "customer"
+  userType = "customer",
+  protocolNumber = null
 }) {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY não configurada.");
@@ -628,6 +630,9 @@ ${contexto}
 
 NOME DO CLIENTE:
 ${nomeCliente || "não informado"}
+
+PROTOCOLO DO ATENDIMENTO:
+${protocolNumber || "não disponível"}
 
 NOVA MENSAGEM DO CLIENTE:
 ${mensagem}
@@ -1985,7 +1990,7 @@ Gere apenas a pergunta, sem introdução. Seja conciso e prático.`;
                 });
                 
                 // Send confirmation to customer
-                const confirmacao = "Certo, estou transferindo você para nossa equipe de atendimento. Um de nossos especialistas entrará em contato com você em breve.";
+                const confirmacao = `Certo, estou transferindo você para nossa equipe de atendimento. Um de nossos especialistas continuará por aqui assim que estiver disponível. Protocolo do atendimento: ${convAtual?.protocol_number || "não disponível"}.`;
                 const envio = await enviarMensagemWhatsApp(message.from, confirmacao);
                 
                 await salvarMensagem({
@@ -2005,7 +2010,8 @@ Gere apenas a pergunta, sem introdução. Seja conciso e prático.`;
                   conversa.id,
                   contact?.profile?.name || convAtual?.contact_name || "Cliente",
                   ultimosDois,
-                  ultimaMensagem
+                  ultimaMensagem,
+                  convAtual?.protocol_number || null
                 );
                 
                 console.log("Conversa escalada para humano:", { conversation_id: conversa.id, external_user_id: message.from });
@@ -2070,7 +2076,8 @@ const historico =
                 experiencias,
                 memoriaPessoal,
                 memoriaCompartilhada,
-                userType
+                userType,
+                protocolNumber: conversa.protocol_number || null
               });
 
             const envio =
@@ -2132,7 +2139,7 @@ router.post(
 
       const conversas =
         await supabaseRest(
-          `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status&limit=1`
+          `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status,protocol_number&limit=1`
         );
 
       if (!Array.isArray(conversas) || !conversas[0]) {
@@ -2177,7 +2184,8 @@ router.post(
           historico,
           conhecimento,
           experiencias,
-          userType: "customer"
+          userType: "customer",
+          protocolNumber: conversa.protocol_number || null
         });
 
       return res.json({
