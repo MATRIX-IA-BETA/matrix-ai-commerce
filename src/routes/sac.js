@@ -1463,8 +1463,8 @@ router.post(
         .from("sac_conversations")
         .update({
           control_mode: "human",
-          requires_review: false,
-          attention_level: null,
+          requires_review: true,
+          attention_level: "urgent",
           human_takeover_at: agora,
           human_queue_notice_at: null,
           review_reason: "manual_human_assumption",
@@ -1506,7 +1506,7 @@ router.post(
         .update({
           control_mode: "ai",
           requires_review: false,
-          attention_level: null,
+          attention_level: "normal",
           human_takeover_at: null,
           human_queue_notice_at: null,
           human_request_count: 0,
@@ -1657,7 +1657,7 @@ router.post(
         .update({
           control_mode: "ai",
           requires_review: false,
-          attention_level: null,
+          attention_level: "normal",
           human_takeover_at: null,
           human_queue_notice_at: null,
           human_request_count: 0,
@@ -1722,7 +1722,7 @@ router.post(
         .update({
           control_mode: "ai",
           requires_review: false,
-          attention_level: null,
+          attention_level: "normal",
           human_request_count: 0,
           human_queue_notice_at: null,
           human_takeover_at: null,
