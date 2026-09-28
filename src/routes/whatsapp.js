@@ -63,6 +63,16 @@ const MATRIX_HANDOFF_WHATSAPPS =
   process.env.MATRIX_HANDOFF_WHATSAPPS ||
   "";
 
+const MATRIX_HANDOFF_TEMPLATE_NAME =
+  env.MATRIX_HANDOFF_TEMPLATE_NAME ||
+  process.env.MATRIX_HANDOFF_TEMPLATE_NAME ||
+  "";
+
+const MATRIX_HANDOFF_TEMPLATE_LANGUAGE =
+  env.MATRIX_HANDOFF_TEMPLATE_LANGUAGE ||
+  process.env.MATRIX_HANDOFF_TEMPLATE_LANGUAGE ||
+  "pt_BR";
+
 function limparNumero(valor) {
   return String(valor || "")
     .replace(/\D/g, "")
@@ -323,6 +333,50 @@ async function atualizarControleConversa(conversationId, updates) {
   );
 }
 
+async function enviarTemplateWhatsApp(to, templateName, languageCode, parameters = []) {
+  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error("WHATSAPP_ACCESS_TOKEN ou WHATSAPP_PHONE_NUMBER_ID não configurado.");
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: limparNumero(to),
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode || "pt_BR" },
+          components: parameters.length
+            ? [{
+                type: "body",
+                parameters: parameters.map(value => ({
+                  type: "text",
+                  text: String(value ?? "")
+                }))
+              }]
+            : []
+        }
+      })
+    }
+  );
+
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("Erro enviando template WhatsApp:", data);
+    throw new Error(data?.error?.message || "WhatsApp recusou o template.");
+  }
+
+  return data;
+}
+
 async function notificarAdminsHumanHandoff(conversationId, customerName, lastFourDigits, lastMessage, protocolNumber) {
   const MATRIX_ADMIN_WHATSAPPS_LIST = [
     ...new Set([
@@ -340,7 +394,19 @@ async function notificarAdminsHumanHandoff(conversationId, customerName, lastFou
   
   for (const numeroAdmin of MATRIX_ADMIN_WHATSAPPS_LIST) {
     try {
-      await enviarMensagemWhatsApp(numeroAdmin, mensagem);
+      if (MATRIX_HANDOFF_TEMPLATE_NAME) {
+        await enviarTemplateWhatsApp(
+          numeroAdmin,
+          MATRIX_HANDOFF_TEMPLATE_NAME,
+          MATRIX_HANDOFF_TEMPLATE_LANGUAGE,
+          [
+            protocolNumber || "não disponível",
+            customerName || "Cliente"
+          ]
+        );
+      } else {
+        await enviarMensagemWhatsApp(numeroAdmin, mensagem);
+      }
     } catch (erro) {
       console.error(`Erro notificando admin ${numeroAdmin}:`, erro.message);
     }
@@ -1690,7 +1756,10 @@ router.post(
               id: status.id,
               status: status.status,
               recipient_id: status.recipient_id,
-              timestamp: status.timestamp
+              timestamp: status.timestamp,
+              errors: status.errors || null,
+              conversation: status.conversation || null,
+              pricing: status.pricing || null
             });
           }
 
