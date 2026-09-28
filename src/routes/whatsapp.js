@@ -58,6 +58,11 @@ const MATRIX_FAMILY_WHATSAPPS =
   process.env.MATRIX_FAMILY_WHATSAPPS ||
   "";
 
+const MATRIX_HANDOFF_WHATSAPPS =
+  env.MATRIX_HANDOFF_WHATSAPPS ||
+  process.env.MATRIX_HANDOFF_WHATSAPPS ||
+  "";
+
 function limparNumero(valor) {
   return String(valor || "")
     .replace(/\D/g, "")
@@ -273,6 +278,30 @@ function reconhecerPedidoDeHumano(texto) {
   return patterns.some(p => p.test(t));
 }
 
+function confirmouTransferenciaHumana({ texto, historico, requestCount }) {
+  if (Number(requestCount || 0) < 1) return false;
+
+  const resposta = String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+  const afirmativa = /^(sim|sim quero|quero sim|pode|pode sim|pode encaminhar|pode transferir|isso|isso mesmo|por favor|claro|confirmo)$/.test(resposta);
+  if (!afirmativa) return false;
+
+  const ultimaAssistente = [...(historico || [])]
+    .reverse()
+    .find(item => item.role === "assistant");
+
+  const anterior = String(ultimaAssistente?.content || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return /encaminh|transfer|atendente humano|falar com.*atendente/.test(anterior);
+}
+
 async function obterConversaCompleta(conversationId) {
   const data = await supabaseRest(
     `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status,control_mode,human_request_count,human_takeover_at,requires_review,attention_level,protocol_number&limit=1`
@@ -295,7 +324,12 @@ async function atualizarControleConversa(conversationId, updates) {
 }
 
 async function notificarAdminsHumanHandoff(conversationId, customerName, lastFourDigits, lastMessage, protocolNumber) {
-  const MATRIX_ADMIN_WHATSAPPS_LIST = listaNumeros(MATRIX_ADMIN_WHATSAPPS);
+  const MATRIX_ADMIN_WHATSAPPS_LIST = [
+    ...new Set([
+      ...listaNumeros(MATRIX_ADMIN_WHATSAPPS),
+      ...listaNumeros(MATRIX_HANDOFF_WHATSAPPS)
+    ])
+  ];
   
   if (!MATRIX_ADMIN_WHATSAPPS_LIST || MATRIX_ADMIN_WHATSAPPS_LIST.length === 0) {
     console.warn("Nenhum admin WhatsApp configurado para notificação de handoff.");
@@ -344,7 +378,7 @@ async function iniciarVerificadorFilaHumana() {
         try {
           // Check if human has sent an outbound message since takeover
           const humanMessages = await supabaseRest(
-            `sac_messages?conversation_id=eq.${encodeURIComponent(conv.id)}&direction=eq.outbound&created_at=gt.${conv.human_takeover_at}&select=id,role,content,created_at&limit=1`
+            `sac_messages?conversation_id=eq.${encodeURIComponent(conv.id)}&direction=eq.outbound&created_at=gt.${encodeURIComponent(conv.human_takeover_at)}&metadata->>sender_role=eq.human&select=id,role,content,created_at&limit=1`
           );
           
           // If human has already sent a message, skip queue notice
@@ -1917,10 +1951,20 @@ router.post(
 
             
 
-            // VERIFICAÇÃO DE PEDIDO DE ATENDIMENTO HUMANO (NOVO)
-            if (userType === "customer" && reconhecerPedidoDeHumano(messageText)) {
+            // VERIFICAÇÃO DE PEDIDO DE ATENDIMENTO HUMANO
+            if (userType === "customer") {
               const convAtual = await obterConversaCompleta(conversa.id);
               const requestCount = convAtual?.human_request_count || 0;
+              const pediuHumano = reconhecerPedidoDeHumano(messageText);
+              const confirmouHumano = confirmouTransferenciaHumana({
+                texto: messageText,
+                historico,
+                requestCount
+              });
+
+              if (!pediuHumano && !confirmouHumano) {
+                // segue atendimento normal
+              } else {
               
               if (requestCount === 0) {
                 // PRIMEIRA VEZ: Gerar uma pergunta contextual com IA, NOT escalate
@@ -1939,7 +1983,13 @@ Com base no histórico desta conversa do SAC, gere UMA ÚNICA pergunta curta e d
 Histórico:
 ${historico.map(h => `${h.role === 'assistant' ? 'ATENDENTE' : 'CLIENTE'}: ${h.content}`).join('\n')}
 
-Cliente pediu: "${messageText}"
+Cliente pediu atendimento humano: "${messageText}"
+
+IMPORTANTE:
+- NÃO pergunte se o cliente quer ser encaminhado, transferido ou falar com atendente.
+- NÃO confirme transferência.
+- Faça uma pergunta útil sobre o problema concreto do cliente para tentar resolver agora.
+- Se o histórico ainda não mostrar o problema, pergunte objetivamente qual é o problema ou o que está acontecendo.
 
 Gere apenas a pergunta, sem introdução. Seja conciso e prático.`;
 
@@ -2034,6 +2084,7 @@ Gere apenas a pergunta, sem introdução. Seja conciso e prático.`;
                 console.log("Conversa escalada para humano:", { conversation_id: conversa.id, external_user_id: message.from });
                 
                 continue;
+              }
               }
             }
 
