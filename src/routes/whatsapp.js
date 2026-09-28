@@ -234,20 +234,140 @@ PRINCÍPIOS:
 - Faça perguntas curtas quando precisar de informação para decidir o próximo passo.
 - Não diga que é humana. Se perguntarem, diga que é a assistente virtual da Shop Matrix.
 - Não execute orientação elétrica perigosa e nunca mande abrir uma fonte de alimentação.
+- CRÍTICO: Nunca diga que já encaminhou o cliente para um humano, não já notificou admin, ou não já fez escalação. Apenas a IA sabe quando está fazendo isso. Se o cliente pedir transferência, mostre empátia mas NÃO afirme falsamente que foi encaminhado.
 - Conhecimento oficial fornecido abaixo tem prioridade sobre conhecimento genérico do modelo.
 - Experiências anteriores ajudam, mas não podem contradizer conhecimento oficial.
+- NUNCA diga que o cliente foi "encaminhado" ou que "estou passando" para humano a menos que control_mode tenha REALMENTE sido alterado para 'human' e a mudança foi confirmada no sistema.
+- Se o cliente pedir humano, a resposta é: uma pergunta esclarecedora (primeira vez) ou transferência confirmada com timestamp (segunda vez).
+- Não falsifique promessas de escalação que não ocorreram.
 `;
 
-function limparNumero(valor) {
-  return String(valor || "").replace(/\D/g, "");
+
+function reconhecerPedidoDeHumano(texto) {
+  const t = String(texto || "").toLowerCase().trim();
+  
+  const patterns = [
+    /atendente/i,
+    /agente\s+(de\s+)?atendimento/i,
+    /falar\s+com\s+(?:uma\s+)?(?:pessoa|humano|gente)/i,
+    /pessoa\s+física/i,
+    /conversar\s+com\s+humano/i,
+    /humano/i,
+    /gostaria\s+de\s+falar\s+com/i,
+    /quero\s+falar\s+com/i,
+    /preciso\s+de\s+(?:uma\s+)?(?:pessoa|atendente|humano)/i,
+    /me\s+(?:conecta|passa|encaminha)\s+(?:para\s+)?(?:um\s+)?(?:atendente|humano|pessoa)/i,
+    /me\s+(?:transfira|passe)\s+para\s+atendimento\s+humano/i,
+    /deixa\s+de\s+ser\s+bot/i,
+    /você\s+é\s+um\s+bot/i,
+    /sou\s+eu\s+quem\s+tenho\s+que\s+(?:falar|conversar)/i
+  ];
+  
+  return patterns.some(p => p.test(t));
 }
 
-function precisaSupabase() {
-  if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
-    throw new Error(
-      "SUPABASE_URL ou SUPABASE_SECRET_KEY não configurado."
-    );
+async function obterConversaCompleta(conversationId) {
+  const data = await supabaseRest(
+    `sac_conversations?id=eq.${encodeURIComponent(conversationId)}&select=id,channel,external_user_id,contact_name,status,control_mode,human_request_count,human_takeover_at,requires_review,attention_level&limit=1`
+  );
+  
+  return Array.isArray(data) && data[0] ? data[0] : null;
+}
+
+async function atualizarControleConversa(conversationId, updates) {
+  return supabaseRest(
+    `sac_conversations?id=eq.${conversationId}`,
+    {
+      method: "PATCH",
+      headers: {
+        Prefer: "return=minimal"
+      },
+      body: JSON.stringify(updates)
+    }
+  );
+}
+
+async function notificarAdminsHumanHandoff(conversationId, customerName, lastFourDigits, lastMessage) {
+  const MATRIX_ADMIN_WHATSAPPS_LIST = listaNumeros(MATRIX_ADMIN_WHATSAPPS);
+  
+  if (!MATRIX_ADMIN_WHATSAPPS_LIST || MATRIX_ADMIN_WHATSAPPS_LIST.length === 0) {
+    console.warn("Nenhum admin WhatsApp configurado para notificação de handoff.");
+    return;
   }
+  
+  const mensagem = `🚨 ATENDIMENTO HUMANO ACIONADO\n\nCliente: ${customerName || "Desconhecido"} (*${lastFourDigits})\nÚltima mensagem: ${lastMessage.substring(0, 100)}\n\nA IA foi bloqueada. Assuma o atendimento na SAC Central.`;
+  
+  for (const numeroAdmin of MATRIX_ADMIN_WHATSAPPS_LIST) {
+    try {
+      await enviarMensagemWhatsApp(numeroAdmin, mensagem);
+    } catch (erro) {
+      console.error(`Erro notificando admin ${numeroAdmin}:`, erro.message);
+    }
+  }
+}
+
+async function enviarMensagemFila(telefone) {
+  const mensagem = "Seu atendimento já está na fila da nossa equipe. No momento nossos atendentes estão concluindo outros atendimentos e em breve continuarão sua solicitação por aqui.";
+  
+  try {
+    await enviarMensagemWhatsApp(telefone, mensagem);
+  } catch (erro) {
+    console.error("Erro enviando mensagem de fila:", erro.message);
+  }
+}
+
+async function iniciarVerificadorFilaHumana() {
+  setInterval(async () => {
+    try {
+      const agora = new Date();
+      const cincoMinutosAtras = new Date(agora.getTime() - 5 * 60 * 1000);
+      
+      // Find conversations in human mode, taken over >5 min ago, not yet notified
+      const conversas = await supabaseRest(
+        `sac_conversations?control_mode=eq.human&human_queue_notice_at=is.null&human_takeover_at=lt.${cincoMinutosAtras.toISOString()}&channel=eq.whatsapp&select=id,external_user_id,contact_name,human_takeover_at&limit=50`
+      );
+      
+      if (!Array.isArray(conversas)) {
+        return;
+      }
+      
+      for (const conv of conversas) {
+        if (!conv.external_user_id) continue;
+        
+        try {
+          // Check if human has sent an outbound message since takeover
+          const humanMessages = await supabaseRest(
+            `sac_messages?conversation_id=eq.${encodeURIComponent(conv.id)}&direction=eq.outbound&created_at=gt.${conv.human_takeover_at}&select=id,role,content,created_at&limit=1`
+          );
+          
+          // If human has already sent a message, skip queue notice
+          if (Array.isArray(humanMessages) && humanMessages.length > 0) {
+            // Human already responded, update the timestamp so we don't check again
+            await atualizarControleConversa(conv.id, {
+              human_queue_notice_at: agora.toISOString(),
+              updated_at: agora.toISOString()
+            });
+            continue;
+          }
+          
+          // No human message yet, send queue notice
+          await enviarMensagemFila(conv.external_user_id);
+          
+          // Mark as notified
+          await atualizarControleConversa(conv.id, {
+            human_queue_notice_at: agora.toISOString(),
+            updated_at: agora.toISOString()
+          });
+          
+          console.log(`Notificação de fila enviada para conversa ${conv.id}`);
+        } catch (erro) {
+          console.error(`Erro processando fila para ${conv.id}:`, erro.message);
+        }
+      }
+    } catch (erro) {
+      console.error("Erro verificador de fila:", erro.message);
+    }
+  }, 30000);
 }
 
 async function supabaseRest(path, options = {}) {
@@ -1608,6 +1728,44 @@ router.post(
                   contact?.profile?.name ||
                   null
               });
+            
+            // VERIFY CONTROL MODE BEFORE PROCESSING CUSTOMER MESSAGES
+            if (userType === "customer") {
+              const convStatus = await obterConversaCompleta(conversa.id);
+              
+              // If human has taken over, don't auto-reply with AI
+              if (convStatus?.control_mode === "human") {
+                // Save the message but don't generate AI response
+                await salvarMensagem({
+                  conversationId: conversa.id,
+                  direction: "inbound",
+                  role: "user",
+                  content: messageText,
+                  externalMessageId: message.id,
+                  metadata: {
+                    type: message.type,
+                    original_type:
+                      parsedMessage?.originalType ||
+                      message.type,
+                    ...(parsedMessage?.metadata || {}),
+                    contact_name:
+                      contact?.profile?.name ||
+                      null,
+                    phone_number_id:
+                      value?.metadata
+                        ?.phone_number_id ||
+                      null
+                  }
+                });
+                
+                console.log("Mensagem salva mas AI bloqueada (modo humano):", {
+                  conversation_id: conversa.id,
+                  from: message.from
+                });
+                
+                continue;
+              }
+            }
 
             await salvarMensagem({
               conversationId: conversa.id,
@@ -1735,7 +1893,127 @@ router.post(
               }
             }
 
-            const historico =
+            
+
+            // VERIFICAÇÃO DE PEDIDO DE ATENDIMENTO HUMANO (NOVO)
+            if (userType === "customer" && reconhecerPedidoDeHumano(messageText)) {
+              const convAtual = await obterConversaCompleta(conversa.id);
+              const requestCount = convAtual?.human_request_count || 0;
+              
+              if (requestCount === 0) {
+                // PRIMEIRA VEZ: Gerar uma pergunta contextual com IA, NOT escalate
+                const conhecimento = userType === "customer" ? await buscarConhecimentoOficial() : [];
+                const experiencias = userType === "customer" ? await buscarExperienciasResolvidas() : [];
+                const memoriaPessoal = [];
+                const memoriaCompartilhada = [];
+                
+                let perguntaFinal = "Entendo que você gostaria de falar com um atendente. Deixe-me tentar ajudar com uma última pergunta para resolver isto agora.";
+                
+                try {
+                  // Generate context-specific clarifying question using AI
+                  const promptEsclarecimento = `
+Com base no histórico desta conversa do SAC, gere UMA ÚNICA pergunta curta e direta que ajude a resolver melhor o problema do cliente.
+
+Histórico:
+${historico.map(h => `${h.role === 'assistant' ? 'ATENDENTE' : 'CLIENTE'}: ${h.content}`).join('\n')}
+
+Cliente pediu: "${messageText}"
+
+Gere apenas a pergunta, sem introdução. Seja conciso e prático.`;
+
+                  const respuestaIA = await fetch("https://api.openai.com/v1/responses", {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${OPENAI_API_KEY}`,
+                      "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                      model: OPENAI_MODEL,
+                      instructions: "Você é um assistente que gera perguntas de esclarecimento. Responda com APENAS a pergunta, nada mais.",
+                      input: promptEsclarecimento
+                    })
+                  });
+                  
+                  const dataIA = await respuestaIA.json();
+                  const perguntaGerada = dataIA.output_text || dataIA.output?.[0]?.content?.[0]?.text || "";
+                  
+                  if (perguntaGerada && perguntaGerada.trim().length > 3) {
+                    perguntaFinal = perguntaGerada.trim();
+                  }
+                } catch (erroIA) {
+                  console.warn("Erro gerando pergunta com IA, usando padrão:", erroIA.message);
+                }
+                
+                const envio = await enviarMensagemWhatsApp(message.from, perguntaFinal);
+                
+                await salvarMensagem({
+                  conversationId: conversa.id,
+                  direction: "outbound",
+                  role: "assistant",
+                  content: perguntaFinal,
+                  externalMessageId: envio?.messages?.[0]?.id || null,
+                  metadata: {
+                    ai_model: OPENAI_MODEL,
+                    human_request_attempt: 1
+                  }
+                });
+                
+                // Increment request count
+                await atualizarControleConversa(conversa.id, {
+                  human_request_count: 1,
+                  updated_at: new Date().toISOString()
+                });
+                
+                console.log("Primeira solicitação de humano recebida, pergunta feita:", { conversation_id: conversa.id });
+                
+                continue;
+              } else {
+                // SEGUNDA VEZ OU MAIS: Escalate to human
+                const agora = new Date().toISOString();
+                const ultimaMensagem = (historico[historico.length - 1]?.content || messageText).substring(0, 150);
+                const ultimosDois = limparNumero(message.from).slice(-4);
+                
+                await atualizarControleConversa(conversa.id, {
+                  control_mode: "human",
+                  requires_review: true,
+                  attention_level: "urgent",
+                  human_takeover_at: agora,
+                  human_request_count: (requestCount || 0) + 1,
+                  human_queue_notice_at: null,
+                  review_reason: "customer_requested_human_support",
+                  updated_at: agora
+                });
+                
+                // Send confirmation to customer
+                const confirmacao = "Certo, estou transferindo você para nossa equipe de atendimento. Um de nossos especialistas entrará em contato com você em breve.";
+                const envio = await enviarMensagemWhatsApp(message.from, confirmacao);
+                
+                await salvarMensagem({
+                  conversationId: conversa.id,
+                  direction: "outbound",
+                  role: "assistant",
+                  content: confirmacao,
+                  externalMessageId: envio?.messages?.[0]?.id || null,
+                  metadata: {
+                    ai_model: OPENAI_MODEL,
+                    human_handoff: true
+                  }
+                });
+                
+                // Notify admins
+                await notificarAdminsHumanHandoff(
+                  conversa.id,
+                  contact?.profile?.name || convAtual?.contact_name || "Cliente",
+                  ultimosDois,
+                  ultimaMensagem
+                );
+                
+                console.log("Conversa escalada para humano:", { conversation_id: conversa.id, external_user_id: message.from });
+                
+                continue;
+              }
+            }
+const historico =
               await buscarHistorico(
                 conversa.id
               );
@@ -2039,4 +2317,14 @@ router.get(
   }
 );
 
+
+// Initialize queue checker on module load
+try {
+  iniciarVerificadorFilaHumana();
+  console.log("Verificador de fila humana iniciado");
+} catch (erro) {
+  console.error("Erro iniciando verificador de fila:", erro);
+}
+
 module.exports = router;
+

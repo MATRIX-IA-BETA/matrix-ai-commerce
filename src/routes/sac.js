@@ -1446,4 +1446,308 @@ router.post(
    EXPORT
 ============================================================ */
 
+
+
+/* ============================================================
+   SAC CONTROLE - ASSUMIR ATENDIMENTO (MODO HUMANO)
+============================================================ */
+
+router.post(
+  "/sac/:id/assume-control",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id);
+      const agora = new Date().toISOString();
+
+      const { data, error } = await supabase
+        .from("sac_conversations")
+        .update({
+          control_mode: "human",
+          requires_review: false,
+          attention_level: null,
+          human_takeover_at: agora,
+          human_queue_notice_at: null,
+          review_reason: "manual_human_assumption",
+          updated_at: agora
+        })
+        .eq("id", conversationId);
+
+      if (error) {
+        throw error;
+      }
+
+      res.json({
+        sucesso: true,
+        mensagem: "Atendimento assumido pela equipe humana",
+        conversa: data
+      });
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+/* ============================================================
+   SAC CONTROLE - DEVOLVER PARA IA
+============================================================ */
+
+router.post(
+  "/sac/:id/return-to-ai",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id);
+      const agora = new Date().toISOString();
+
+      const { data, error } = await supabase
+        .from("sac_conversations")
+        .update({
+          control_mode: "ai",
+          requires_review: false,
+          attention_level: null,
+          human_takeover_at: null,
+          human_queue_notice_at: null,
+          human_request_count: 0,
+          review_reason: null,
+          ai_released_at: agora,
+          updated_at: agora
+        })
+        .eq("id", conversationId);
+
+      if (error) {
+        throw error;
+      }
+
+      res.json({
+        sucesso: true,
+        mensagem: "Conversa devolvida para controle da IA",
+        conversa: data
+      });
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+
+/* ============================================================
+   CONTROLE DE MODO: ASSUMIR ATENDIMENTO (IA → HUMANO)
+============================================================ */
+
+router.post(
+  "/sac/:id/assume-control",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id);
+      
+      const { data: convData, error: convError } = await supabase
+        .from("sac_conversations")
+        .select("id, control_mode")
+        .eq("id", conversationId)
+        .single();
+      
+      if (convError || !convData) {
+        return res.status(404).json({
+          sucesso: false,
+          mensagem: "Conversa não encontrada."
+        });
+      }
+      
+      if (convData.control_mode === "human") {
+        return res.json({
+          sucesso: true,
+          mensagem: "Já em modo humano."
+        });
+      }
+      
+      const agora = new Date().toISOString();
+      
+      const { error: updateError } = await supabase
+        .from("sac_conversations")
+        .update({
+          control_mode: "human",
+          requires_review: true,
+          attention_level: "urgent",
+          human_takeover_at: agora,
+          human_queue_notice_at: null,
+          review_reason: "manual_human_takeover_from_sac",
+          updated_at: agora
+        })
+        .eq("id", conversationId);
+      
+      if (updateError) {
+        throw updateError;
+      }
+      
+      res.json({
+        sucesso: true,
+        mensagem: "Conversa assumida em modo humano."
+      });
+      
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+
+
+
+/* ============================================================
+   SAC CONTROL: ASSUMIR ATENDIMENTO (AI -> HUMAN)
+============================================================ */
+
+router.post(
+  "/sac/:id/assume-control",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id);
+
+      const { data, error } = await supabase
+        .from("sac_conversations")
+        .update({
+          control_mode: "human",
+          requires_review: true,
+          attention_level: "urgent",
+          human_takeover_at: new Date().toISOString(),
+          human_queue_notice_at: null,
+          review_reason: "manual_assumption_by_operator",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", conversationId);
+
+      if (error) {
+        throw error;
+      }
+
+      res.json({
+        sucesso: true,
+        mensagem: "Conversa assumida pelo atendente humano."
+      });
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+
+/* ============================================================
+   SAC CONTROL: DEVOLVER PARA IA (HUMAN -> AI)
+============================================================ */
+
+router.post(
+  "/sac/:id/return-to-ai",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id);
+
+      const { data, error } = await supabase
+        .from("sac_conversations")
+        .update({
+          control_mode: "ai",
+          requires_review: false,
+          attention_level: null,
+          human_takeover_at: null,
+          human_queue_notice_at: null,
+          human_request_count: 0,
+          ai_released_at: new Date().toISOString(),
+          review_reason: null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", conversationId);
+
+      if (error) {
+        throw error;
+      }
+
+      res.json({
+        sucesso: true,
+        mensagem: "Conversa devolvida para IA."
+      });
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
+
+/* ============================================================
+   CONTROLE DE MODO: DEVOLVER PARA IA
+============================================================ */
+
+router.post(
+  "/sac/:id/return-to-ai",
+  async (req, res) => {
+    try {
+      const conversationId = String(req.params.id);
+      
+      const { data: convData, error: convError } = await supabase
+        .from("sac_conversations")
+        .select("id, control_mode")
+        .eq("id", conversationId)
+        .single();
+      
+      if (convError || !convData) {
+        return res.status(404).json({
+          sucesso: false,
+          mensagem: "Conversa não encontrada."
+        });
+      }
+      
+      if (convData.control_mode === "ai") {
+        return res.json({
+          sucesso: true,
+          mensagem: "Já em modo IA."
+        });
+      }
+      
+      const agora = new Date().toISOString();
+      
+      const { error: updateError } = await supabase
+        .from("sac_conversations")
+        .update({
+          control_mode: "ai",
+          requires_review: false,
+          attention_level: null,
+          human_request_count: 0,
+          human_queue_notice_at: null,
+          human_takeover_at: null,
+          review_reason: null,
+          ai_released_at: agora,
+          updated_at: agora
+        })
+        .eq("id", conversationId);
+      
+      if (updateError) {
+        throw updateError;
+      }
+      
+      res.json({
+        sucesso: true,
+        mensagem: "Conversa revertida para modo IA."
+      });
+      
+    } catch (erro) {
+      res.status(500).json({
+        sucesso: false,
+        mensagem: erro.message
+      });
+    }
+  }
+);
+
 module.exports = router;
