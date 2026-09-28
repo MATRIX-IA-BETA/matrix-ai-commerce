@@ -58,6 +58,12 @@ const MATRIX_FAMILY_WHATSAPPS =
   process.env.MATRIX_FAMILY_WHATSAPPS ||
   "";
 
+function limparNumero(valor) {
+  return String(valor || "")
+    .replace(/\D/g, "")
+    .trim();
+}
+
 function listaNumeros(valor) {
   return String(valor || "")
     .split(",")
