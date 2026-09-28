@@ -65,6 +65,7 @@ body.open .main{visibility:visible;opacity:1}body.open .side{visibility:hidden}.
 (()=>{
 const $=id=>document.getElementById(id);
 const S={rows:[],id:null,conversation:null,listSig:"",convSig:"",busy:false,sending:false};
+let deepLinkConversationId=new URLSearchParams(window.location.search).get("conversation_id");
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt=v=>{if(!v)return"";const d=new Date(v);return isNaN(d)?"":d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})};
 const name=c=>c.contact_name||c.buyer_nickname||c.external_user_id||c.phone_number||"Cliente";
@@ -113,7 +114,21 @@ async function openConv(id,manual=false){
  box.innerHTML=m.length?m.map(x=>{const out=x.direction==="outbound"||x.role==="assistant"||x.sender_role==="assistant";const a=x.transcription||x.image_analysis||x.video_analysis;return `<div class="bubble ${out?"out":"in"}"><div>${esc(x.text||x.content||"(mídia)")}</div>${a?`<div class="analysis">${esc(typeof a==="string"?a:JSON.stringify(a))}</div>`:""}<div class="meta">${out?"Matrix AI":"Cliente"} • ${esc(fmt(x.date_created||x.created_at))}</div></div>`}).join(""):'<div class="empty">Nenhuma mensagem registrada.</div>';
  if(manual||near)box.scrollTop=box.scrollHeight;else box.scrollTop=old;
 }
-async function refresh(force=false){if(S.busy)return;S.busy=true;try{await loadList(force);if(S.id)await openConv(S.id,false)}catch(e){console.error(e)}finally{S.busy=false}}
+async function refresh(force=false){
+ if(S.busy)return;
+ S.busy=true;
+ try{
+   await loadList(force);
+   if(!S.id&&deepLinkConversationId){
+     const id=deepLinkConversationId;
+     deepLinkConversationId=null;
+     await openConv(id,true);
+   }else if(S.id){
+     await openConv(S.id,false);
+   }
+ }catch(e){console.error(e)}
+ finally{S.busy=false}
+}
 async function sendReply(){if(S.sending)return;const text=$("reply").value.trim();const c=S.conversation||{};const row=(S.rows||[]).find(x=>String(x.id)===String(S.id))||{};const to=String(c.external_user_id||c.phone_number||c.phone||c.whatsapp||row.external_user_id||row.phone_number||row.phone||row.whatsapp||"").replace(/\D/g,"");if(!text||!S.id||!to)return;S.sending=true;$("send").disabled=true;$("send").textContent="Enviando..";try{await post("/whatsapp/send",{to,message:text,conversation_id:S.id});$("reply").value="";S.convSig="";await openConv(S.id,false);await loadList(true)}catch(e){alert("Erro ao enviar: "+e.message)}finally{S.sending=false;$("send").textContent="Enviar";$("send").disabled=false}}
 $("send").onclick=sendReply;$("reply").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendReply()}});$("q").oninput=renderList;$("f").onchange=renderList;$("back").onclick=()=>document.body.classList.remove("open");refresh(true);setInterval(()=>refresh(false),8000);document.addEventListener("visibilitychange",()=>{if(!document.hidden)refresh(false)});
 window.assumir=assumir;window.devolver=devolver;
