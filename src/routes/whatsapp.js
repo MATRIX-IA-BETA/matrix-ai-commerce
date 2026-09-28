@@ -73,6 +73,18 @@ const MATRIX_HANDOFF_TEMPLATE_LANGUAGE =
   process.env.MATRIX_HANDOFF_TEMPLATE_LANGUAGE ||
   "pt_BR";
 
+const MATRIX_SAC_PUBLIC_URL =
+  env.MATRIX_SAC_PUBLIC_URL ||
+  process.env.MATRIX_SAC_PUBLIC_URL ||
+  (process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/sac/central`
+    : "https://steadfast-insight-production-2092.up.railway.app/sac/central");
+
+function linkAtendimentoSAC(conversationId) {
+  const separador = MATRIX_SAC_PUBLIC_URL.includes("?") ? "&" : "?";
+  return `${MATRIX_SAC_PUBLIC_URL}${separador}conversation_id=${encodeURIComponent(conversationId)}`;
+}
+
 function limparNumero(valor) {
   return String(valor || "")
     .replace(/\D/g, "")
@@ -390,7 +402,8 @@ async function notificarAdminsHumanHandoff(conversationId, customerName, lastFou
     return;
   }
   
-  const mensagem = `🚨 ATENDIMENTO HUMANO ACIONADO\n\nCliente: ${customerName || "Desconhecido"} (*${lastFourDigits})\nProtocolo: ${protocolNumber || "não disponível"}\nÚltima mensagem: ${lastMessage.substring(0, 100)}\n\nA IA foi bloqueada. Assuma o atendimento na SAC Central.`;
+  const linkSAC = linkAtendimentoSAC(conversationId);
+  const mensagem = `🚨 ATENDIMENTO HUMANO ACIONADO\n\nCliente: ${customerName || "Desconhecido"} (*${lastFourDigits})\nProtocolo: ${protocolNumber || "não disponível"}\nÚltima mensagem: ${lastMessage.substring(0, 100)}\n\nA IA foi bloqueada. Assuma o atendimento na SAC Central.\n\n🔗 Abrir atendimento:\n${linkSAC}`;
   
   for (const numeroAdmin of MATRIX_ADMIN_WHATSAPPS_LIST) {
     try {
