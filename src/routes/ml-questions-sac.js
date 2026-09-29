@@ -822,4 +822,51 @@ router.post("/sac/ml/questions/:questionId/answer", async (req, res) => {
   }
 });
 
+if (
+  String(
+    process.env.ML_CLEANUP_OLD_UNANSWERED_ON_START ||
+    env.ML_CLEANUP_OLD_UNANSWERED_ON_START ||
+    ""
+  ) === "1"
+) {
+  setTimeout(async () => {
+    try {
+      const port = process.env.PORT || 8080;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/sac/ml/questions/cleanup-old-unanswered`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            older_than_hours: 72,
+            confirm: "DELETE"
+          })
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      console.log(
+        "[ML QUESTIONS] STARTUP CLEANUP RESULT:",
+        JSON.stringify({
+          http_status: response.status,
+          cutoff: data.cutoff,
+          unanswered_scanned: data.unanswered_scanned,
+          eligible: data.eligible,
+          deleted: data.deleted,
+          errors: data.errors,
+          error_details: data.error_details || []
+        })
+      );
+    } catch (e) {
+      console.error(
+        "[ML QUESTIONS] STARTUP CLEANUP ERROR:",
+        e.message
+      );
+    }
+  }, 15000);
+}
+
 module.exports = router;
