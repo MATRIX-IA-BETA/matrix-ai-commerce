@@ -498,6 +498,153 @@ router.get("/sac/ml/questions/:questionId", async (req, res) => {
 });
 
 // ---------------------------------------------------------
+// CLEANUP OLD UNANSWERED QUESTIONS
+// POST /sac/ml/questions/cleanup-old-unanswered
+// body: { older_than_hours: 72, confirm: "DELETE" }
+// ---------------------------------------------------------
+router.post("/sac/ml/questions/cleanup-old-unanswered", async (req, res) => {
+  try {
+    if (String(req.body?.confirm || "") !== "DELETE") {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "Confirmação obrigatória: envie confirm=DELETE."
+      });
+    }
+
+    const olderThanHours = Math.max(
+      1,
+      Math.min(Number(req.body?.older_than_hours || 72), 24 * 365)
+    );
+
+    const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
+
+    let account = await getMercadoLivreAccount();
+
+    if (!account) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Nenhuma conta Mercado Livre conectada."
+      });
+    }
+
+    const sellerId = String(account.user_id || account.account_id);
+    const limit = 50;
+    let offset = 0;
+    let totalSeen = 0;
+    const eligible = [];
+    const deleted = [];
+    const errors = [];
+
+    while (true) {
+      const params = new URLSearchParams({
+        seller_id: sellerId,
+        api_version: "4",
+        limit: String(limit),
+        offset: String(offset),
+        status: "UNANSWERED",
+        sort_fields: "date_created",
+        sort_types: "DESC"
+      });
+
+      const { data, account: nextAccount } = await mlJson(
+        `/questions/search?${params.toString()}`,
+        account
+      );
+
+      account = nextAccount;
+
+      const questions = Array.isArray(data.questions) ? data.questions : [];
+      if (!questions.length) break;
+
+      for (const question of questions) {
+        totalSeen++;
+
+        const createdAt = question?.date_created
+          ? new Date(question.date_created)
+          : null;
+
+        const isUnanswered =
+          String(question?.status || "").toUpperCase() === "UNANSWERED" &&
+          !question?.answer;
+
+        const isOlder =
+          createdAt instanceof Date &&
+          Number.isFinite(createdAt.getTime()) &&
+          createdAt.getTime() < cutoff.getTime();
+
+        if (isUnanswered && isOlder && question?.id != null) {
+          eligible.push({
+            id: String(question.id),
+            date_created: question.date_created,
+            item_id: question.item_id || null,
+            text: question.text || ""
+          });
+        }
+      }
+
+      offset += questions.length;
+
+      const total = Number(data.total || 0);
+      if (
+        questions.length < limit ||
+        (Number.isFinite(total) && total > 0 && offset >= total)
+      ) {
+        break;
+      }
+
+      // Safety ceiling against unexpected API pagination loops.
+      if (offset >= 5000) break;
+    }
+
+    for (const question of eligible) {
+      try {
+        const { data, account: nextAccount } = await mlJson(
+          `/questions/${encodeURIComponent(question.id)}`,
+          account,
+          { method: "DELETE" }
+        );
+
+        account = nextAccount;
+
+        deleted.push({
+          id: question.id,
+          date_created: question.date_created,
+          item_id: question.item_id,
+          response: data
+        });
+      } catch (e) {
+        errors.push({
+          id: question.id,
+          date_created: question.date_created,
+          error: e.message,
+          detalhe: e.data || null
+        });
+      }
+    }
+
+    return res.json({
+      sucesso: errors.length === 0,
+      cutoff: cutoff.toISOString(),
+      older_than_hours: olderThanHours,
+      unanswered_scanned: totalSeen,
+      eligible: eligible.length,
+      deleted: deleted.length,
+      errors: errors.length,
+      deleted_questions: deleted,
+      error_details: errors
+    });
+  } catch (e) {
+    console.error("[ML QUESTIONS] cleanup old unanswered:", e);
+
+    return res.status(e.status || 500).json({
+      sucesso: false,
+      mensagem: e.message,
+      detalhe: e.data || null
+    });
+  }
+});
+
+// ---------------------------------------------------------
 // AI DRAFT
 // POST /sac/ml/questions/:questionId/draft
 // ---------------------------------------------------------
