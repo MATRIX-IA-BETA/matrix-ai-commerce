@@ -645,6 +645,74 @@ router.post("/sac/ml/questions/cleanup-old-unanswered", async (req, res) => {
 });
 
 // ---------------------------------------------------------
+// DELETE QUESTION
+// DELETE /sac/ml/questions/:questionId
+// ---------------------------------------------------------
+router.delete("/sac/ml/questions/:questionId", async (req, res) => {
+  try {
+    const questionId = String(req.params.questionId || "").trim();
+
+    if (!/^\d+$/.test(questionId)) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: "ID de pergunta inválido."
+      });
+    }
+
+    let account = await getMercadoLivreAccount();
+
+    if (!account) {
+      return res.status(404).json({
+        sucesso: false,
+        mensagem: "Nenhuma conta Mercado Livre conectada."
+      });
+    }
+
+    const { data: deleted, account: updatedAccount } = await mlJson(
+      `/questions/${encodeURIComponent(questionId)}`,
+      account,
+      { method: "DELETE" }
+    );
+
+    account = updatedAccount;
+
+    const externalId = questionExternalId(questionId);
+    const now = new Date().toISOString();
+
+    const { error: localError } = await supabase
+      .from("sac_conversations")
+      .update({
+        status: "deleted",
+        updated_at: now
+      })
+      .eq("channel", "mercadolivre_questions")
+      .eq("external_user_id", externalId);
+
+    if (localError) {
+      console.error(
+        "[ML QUESTIONS] pergunta excluída no ML, mas falhou ao marcar localmente:",
+        localError
+      );
+    }
+
+    return res.json({
+      sucesso: true,
+      mensagem: "Pergunta excluída do Mercado Livre.",
+      question_id: questionId,
+      resposta_ml: deleted
+    });
+  } catch (e) {
+    console.error("[ML QUESTIONS] delete:", e);
+
+    return res.status(e.status || 500).json({
+      sucesso: false,
+      mensagem: e.message,
+      detalhe: e.data || null
+    });
+  }
+});
+
+// ---------------------------------------------------------
 // AI DRAFT
 // POST /sac/ml/questions/:questionId/draft
 // ---------------------------------------------------------
