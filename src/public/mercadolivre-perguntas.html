@@ -12,7 +12,7 @@ button,a{background:#101d31;color:var(--text);border:1px solid var(--line);borde
 .layout{display:grid;grid-template-columns:390px 1fr;min-height:0}.side{display:grid;grid-template-rows:auto 1fr;border-right:1px solid var(--line);min-height:0}.tools{display:flex;gap:6px;padding:9px;border-bottom:1px solid var(--line)}.tools input{flex:1;min-width:0;background:#101d31;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:9px}.list{overflow:auto}
 .q{padding:12px;border-bottom:1px solid #17243a;cursor:pointer}.q.active{background:#16213a;border-left:3px solid var(--accent)}.q b{display:block}.q span{display:block;color:var(--muted);font-size:12px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .main{display:grid;grid-template-rows:auto 1fr auto;min-height:0}.head{padding:11px 12px;border-bottom:1px solid var(--line)}.head b{display:block}.head span{color:var(--muted);font-size:12px}.msgs{overflow:auto;padding:15px;display:flex;flex-direction:column;gap:9px}.bubble{max-width:82%;padding:10px 11px;border-radius:13px;font-size:14px;line-height:1.4}.in{align-self:flex-start;background:#17243a}.out{align-self:flex-end;background:#293575}.meta{font-size:10px;color:#a5b1c3;margin-top:5px}
-.compose{padding:10px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr auto auto;gap:7px}.compose textarea{resize:none;min-height:48px;max-height:130px;background:#101d31;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px}.ai{border-color:#463b8d}.send{background:var(--accent);font-weight:800}.empty{color:var(--muted);padding:18px;text-align:center}.back{display:none}
+.compose{padding:10px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr auto auto;gap:7px}.compose textarea{resize:none;min-height:48px;max-height:130px;background:#101d31;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:10px}.ai{border-color:#463b8d}.send{background:var(--accent);font-weight:800}.delete{background:#3a1118;border-color:#7f1d1d;color:#fecaca;font-weight:800}.empty{color:var(--muted);padding:18px;text-align:center}.back{display:none}
 @media(max-width:760px){.layout{display:block}.side,.main{position:absolute;top:58px;bottom:0;left:0;right:0}.main{transform:translateX(100%);transition:.18s;z-index:5;background:var(--bg)}body.open .main{transform:translateX(0)}body.open .side{visibility:hidden}.back{display:inline-block}.compose{grid-template-columns:1fr auto}.compose .ai{grid-column:1/3}.bubble{max-width:90%}}
 </style>
 </head>
@@ -21,21 +21,52 @@ button,a{background:#101d31;color:var(--text);border:1px solid var(--line);borde
 <div class="layout">
 <section class="side"><div class="tools"><input id="search" placeholder="Buscar pergunta/produto..."><button id="onlyOpen">Abertas</button></div><div class="list" id="list"><div class="empty">Carregando...</div></div></section>
 <section class="main">
-<div class="head"><button class="back" id="back">‹</button><b id="who">Selecione uma pergunta</b><span id="meta">Somente perguntas pré-venda feitas nos anúncios do Mercado Livre</span></div>
+<div class="head"><button class="back" id="back">‹</button><b id="who">Selecione uma pergunta</b><span id="meta">Somente perguntas pré-venda feitas nos anúncios do Mercado Livre</span><div style="margin-top:8px"><button class="delete" id="deleteQ" disabled>Excluir pergunta</button></div></div>
 <div class="msgs" id="msgs"><div class="empty">Selecione uma pergunta.</div></div>
 <div class="compose"><textarea id="reply" disabled placeholder="Resposta..."></textarea><button class="ai" id="draft" disabled>Gerar IA</button><button class="send" id="send" disabled>Enviar</button></div>
 </section></div></div>
 <script>
-const $=id=>document.getElementById(id);const S={rows:[],selected:null,openOnly:false,busy:false,sending:false};
+const $=id=>document.getElementById(id);const S={rows:[],selected:null,openOnly:false,busy:false,sending:false,deleting:false};
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const qid=c=>String(c.external_user_id||"").replace(/^mlq:/,"");
 async function json(url,opt){const r=await fetch(url,opt);const d=await r.json().catch(()=>({}));if(!r.ok||d.sucesso===false)throw new Error(d.mensagem||`HTTP ${r.status}`);return d}
 async function sync(silent=false){if(S.busy)return;S.busy=true;try{const d=await json("/sac/ml/questions/sync",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({max:300})});if(!silent)console.log(`Sincronizadas: ${d.sincronizados} | erros: ${d.erros}`);await load()}catch(e){if(!silent)alert(e.message)}finally{S.busy=false}}
 async function load(){const d=await json("/sac/ml/questions?limit=300");S.rows=d.conversas||[];renderList()}
 function renderList(){const s=$("search").value.toLowerCase();const rows=S.rows.filter(c=>(!S.openOnly||c.status==="open")&&(`${c.contact_name||""} ${c.summary||""}`.toLowerCase().includes(s)));$("list").innerHTML=rows.length?rows.map(c=>`<div class="q ${S.selected===c.id?"active":""}" data-id="${c.id}"><b>${esc(c.contact_name||"Comprador ML")}</b><span>${esc(c.summary||"")}</span><span>${esc(String(c.last_message_at||"").replace("T"," ").slice(0,16))} • ${esc(c.status||"open")}</span></div>`).join(""):`<div class="empty">Nenhuma pergunta.</div>`;document.querySelectorAll(".q").forEach(e=>e.onclick=()=>openQ(e.dataset.id))}
-async function openQ(id){const c=S.rows.find(x=>String(x.id)===String(id));if(!c)return;S.selected=c.id;renderList();document.body.classList.add("open");const idq=qid(c);const d=await json("/sac/ml/questions/"+encodeURIComponent(idq));$("who").textContent=c.contact_name||"Comprador ML";$("meta").textContent=c.summary||`Pergunta ${idq}`;const m=d.mensagens||[];$("msgs").innerHTML=m.length?m.map(x=>`<div class="bubble ${x.direction==="outbound"?"out":"in"}"><div>${esc(x.text||x.content||"")}</div><div class="meta">${x.direction==="outbound"?"Loja":"Comprador"} • ${esc(String(x.date_created||x.created_at||"").replace("T"," ").slice(0,16))}</div></div>`).join(""):`<div class="empty">Sem mensagens.</div>`;$("msgs").scrollTop=$("msgs").scrollHeight;const answered=c.status==="answered";$("reply").disabled=answered;$("draft").disabled=answered;$("send").disabled=answered;$("reply").placeholder=answered?"Pergunta já respondida.":"Digite a resposta..."}
+async function openQ(id){const c=S.rows.find(x=>String(x.id)===String(id));if(!c)return;S.selected=c.id;renderList();document.body.classList.add("open");const idq=qid(c);const d=await json("/sac/ml/questions/"+encodeURIComponent(idq));$("who").textContent=c.contact_name||"Comprador ML";$("meta").textContent=c.summary||`Pergunta ${idq}`;const m=d.mensagens||[];$("msgs").innerHTML=m.length?m.map(x=>`<div class="bubble ${x.direction==="outbound"?"out":"in"}"><div>${esc(x.text||x.content||"")}</div><div class="meta">${x.direction==="outbound"?"Loja":"Comprador"} • ${esc(String(x.date_created||x.created_at||"").replace("T"," ").slice(0,16))}</div></div>`).join(""):`<div class="empty">Sem mensagens.</div>`;$("msgs").scrollTop=$("msgs").scrollHeight;const answered=c.status==="answered";$("reply").disabled=answered;$("draft").disabled=answered;$("send").disabled=answered;$("deleteQ").disabled=false;$("reply").placeholder=answered?"Pergunta já respondida.":"Digite a resposta..."}
 async function draft(){const c=S.rows.find(x=>x.id===S.selected);if(!c)return;$("draft").disabled=true;$("draft").textContent="Gerando...";try{const d=await json(`/sac/ml/questions/${encodeURIComponent(qid(c))}/draft`,{method:"POST"});$("reply").value=d.rascunho||""}catch(e){alert("IA: "+e.message)}finally{$("draft").disabled=false;$("draft").textContent="Gerar IA"}}
 async function send(){if(S.sending)return;const c=S.rows.find(x=>x.id===S.selected),text=$("reply").value.trim();if(!c||!text)return;S.sending=true;$("send").disabled=true;$("send").textContent="Enviando...";try{await json(`/sac/ml/questions/${encodeURIComponent(qid(c))}/answer`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});$("reply").value="";await load();await openQ(c.id)}catch(e){alert("Erro: "+e.message)}finally{S.sending=false;$("send").textContent="Enviar"}}
-$("sync").onclick=()=>sync(false);$("search").oninput=renderList;$("onlyOpen").onclick=()=>{S.openOnly=!S.openOnly;$("onlyOpen").textContent=S.openOnly?"Todas":"Abertas";renderList()};$("back").onclick=()=>document.body.classList.remove("open");$("draft").onclick=draft;$("send").onclick=send;
+async function deleteQuestion(){
+ if(S.deleting)return;
+ const c=S.rows.find(x=>x.id===S.selected);
+ if(!c)return;
+ const idq=qid(c);
+ if(!confirm("Excluir esta pergunta do Mercado Livre? Essa ação não pode ser desfeita."))return;
+ S.deleting=true;
+ $("deleteQ").disabled=true;
+ $("deleteQ").textContent="Excluindo...";
+ try{
+   await json(`/sac/ml/questions/${encodeURIComponent(idq)}`,{method:"DELETE"});
+   S.rows=S.rows.filter(x=>x.id!==c.id);
+   S.selected=null;
+   renderList();
+   $("who").textContent="Selecione uma pergunta";
+   $("meta").textContent="Pergunta excluída do Mercado Livre.";
+   $("msgs").innerHTML='<div class="empty">Pergunta excluída.</div>';
+   $("reply").value="";
+   $("reply").disabled=true;
+   $("draft").disabled=true;
+   $("send").disabled=true;
+   $("deleteQ").disabled=true;
+   document.body.classList.remove("open");
+ }catch(e){
+   alert("Erro ao excluir: "+e.message);
+   $("deleteQ").disabled=false;
+ }finally{
+   S.deleting=false;
+   $("deleteQ").textContent="Excluir pergunta";
+ }
+}
+$("sync").onclick=()=>sync(false);$("deleteQ").onclick=deleteQuestion;$("search").oninput=renderList;$("onlyOpen").onclick=()=>{S.openOnly=!S.openOnly;$("onlyOpen").textContent=S.openOnly?"Todas":"Abertas";renderList()};$("back").onclick=()=>document.body.classList.remove("open");$("draft").onclick=draft;$("send").onclick=send;
 load().then(()=>sync(true));setInterval(()=>sync(true),30000);
 </script></body></html>
