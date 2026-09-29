@@ -149,6 +149,46 @@ function marketplaceCancellationInfo(order) {
   };
 }
 
+async function enrichMarketplaceOrderWithShipment(order, account) {
+  const shippingId = order?.shipping?.id;
+  if (!shippingId) return order;
+
+  try {
+    const { response } = await mercadoLivreFetch(
+      `/shipments/${encodeURIComponent(String(shippingId))}`,
+      account
+    );
+    const shipment = await readJson(response);
+
+    if (!response.ok) {
+      console.warn(
+        `[ML fiscal guard] Shipment ${shippingId} não pôde ser consultado: HTTP ${response.status}`
+      );
+      return order;
+    }
+
+    const enriched = {
+      ...order,
+      shipping: {
+        ...(order?.shipping || {}),
+        ...shipment
+      }
+    };
+
+    console.log(
+      `[ML fiscal guard] Pedido ${order?.id || "?"} shipment=${shippingId} logistic_type=${shipment?.logistic_type || "n/a"} mode=${shipment?.mode || "n/a"}`
+    );
+
+    return enriched;
+  } catch (error) {
+    console.warn(
+      `[ML fiscal guard] Falha consultando shipment ${shippingId}:`,
+      error.message
+    );
+    return order;
+  }
+}
+
 async function saveFreshMarketplaceOrder(orderId, order) {
   const update = {
     status: order?.status || null,
@@ -199,11 +239,15 @@ async function checkMarketplaceOrderBeforeNfe(orderId) {
     throw e;
   }
 
-  await saveFreshMarketplaceOrder(orderId, order);
+  const enrichedOrder = await enrichMarketplaceOrderWithShipment(order, account);
+  await saveFreshMarketplaceOrder(orderId, enrichedOrder);
 
   return {
-    order,
-    ...marketplaceCancellationInfo(order)
+    order: enrichedOrder,
+    shipment: enrichedOrder?.shipping || null,
+    logisticType: enrichedOrder?.shipping?.logistic_type || null,
+    shippingMode: enrichedOrder?.shipping?.mode || null,
+    ...marketplaceCancellationInfo(enrichedOrder)
   };
 }
 
