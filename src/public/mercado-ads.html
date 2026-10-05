@@ -26,6 +26,7 @@ svg{width:100%;height:230px;overflow:visible}.axis{stroke:#2b4567;stroke-width:1
 @media(max-width:1250px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
 @media(max-width:720px){.page{padding:12px}.top{flex-direction:column}.controls{justify-content:flex-start}.kpis{grid-template-columns:repeat(2,1fr)}.detail-grid{grid-template-columns:1fr 1fr}}
 </style>
+<script defer src="/ads-performance-ui.js?v=1"></script>
 </head>
 <body>
 <div class="page">
@@ -39,8 +40,8 @@ svg{width:100%;height:230px;overflow:visible}.axis{stroke:#2b4567;stroke-width:1
       <select id="days">
         <option value="7">7 dias</option>
         <option value="14">14 dias</option>
-        <option value="30" selected>30 dias</option>
-        <option value="60">60 dias</option>
+        <option value="30">30 dias</option>
+        <option value="60" selected>60 dias</option>
         <option value="90">90 dias</option>
       </select>
       <button id="reload" class="primary">Atualizar ao vivo</button>
@@ -298,7 +299,7 @@ async function load(){
     $("liveText").textContent=`${a?.account_name||a?.advertiser_name||"Mercado Ads"} · ${summary.range?.dateFrom||""} a ${summary.range?.dateTo||""}`;
   }catch(e){
     showError(e.message);$("liveText").textContent="Falha ao consultar Mercado Ads";
-  }finally{reload.disabled=false;sync.disabled=false}
+  }finally{reload.disabled=false;sync.disabled=false;window.dispatchEvent(new Event("matrix:ads-loaded"))}
 }
 
 async function syncHistory(){

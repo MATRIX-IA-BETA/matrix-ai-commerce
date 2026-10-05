@@ -273,4 +273,6 @@ const PORT = env.PORT || process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Matrix AI Commerce V2 modular rodando na porta ${PORT}`);
+  require("./src/services/ads-performance").startAdsPerformanceSync();
 });
+

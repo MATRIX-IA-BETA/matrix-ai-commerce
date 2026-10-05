@@ -198,4 +198,13 @@ router.post("/api/ads/sync", async (req, res) => {
   }
 });
 
+router.get("/api/ads/performance", async (req, res) => {
+  try {
+    const { getAdsPerformance } = require("../services/ads-performance");
+    res.set("Cache-Control", "no-store");
+    res.json({ success: true, ...(await getAdsPerformance({ days: req.query.days || 60 })) });
+  } catch (error) { errorResponse(res, error); }
+});
+
 module.exports = router;
+
