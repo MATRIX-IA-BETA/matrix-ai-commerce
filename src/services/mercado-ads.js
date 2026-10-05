@@ -460,7 +460,7 @@ async function getCampaignDaily({
   return {
     advertiser: adsContext.advertiser,
     range,
-    daily: Array.isArray(fetched.data) ? fetched.data : []
+    daily: Array.isArray(fetched.data?.results) ? fetched.data.results : (Array.isArray(fetched.data) ? fetched.data : [])
   };
 }
 
