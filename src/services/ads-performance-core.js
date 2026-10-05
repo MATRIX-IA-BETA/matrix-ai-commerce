@@ -54,7 +54,7 @@ function buildPerformance({ orders = [], ads = [], dateFrom, dateTo, now = new D
   const weekly = [];
   for (let start = monday(dateFrom); start <= dateTo; start = shift(start, 7)) {
     const from = start < dateFrom ? dateFrom : start, end = shift(start, 6), to = end > dateTo ? dateTo : end;
-    const row = period(from, to); row.partial = from !== start || to !== end || to >= today;
+    const row = period(from, to); row.week_start = start; row.week_end = end; row.partial = from !== start || to !== end || to >= today;
     const previous = weekly.at(-1);
     row.revenue_change = !row.partial && previous && !previous.partial && previous.revenue > 0 ? round((row.revenue / previous.revenue - 1) * 100, 1) : null;
     weekly.push(row);

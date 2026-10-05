@@ -12,7 +12,7 @@ test('Brasília timezone and Monday-Sunday boundaries include Sunday late at nig
   assert.equal(monday('2026-10-04'),'2026-09-28');
   const r=buildPerformance({...base,orders:[{date_created:'2026-10-05T02:59:59Z',total_amount:50,status:'paid'}],ads:adsWeek()});
   assert.equal(r.weekly.at(-2).orders,1); assert.equal(r.weekly.at(-1).orders,0);
-  assert.equal(r.weekly.at(-2).partial,false);assert.equal(r.weekly.at(-1).partial,true);
+  assert.equal(r.weekly.at(-1).week_start,'2026-10-05');assert.equal(r.weekly.at(-1).week_end,'2026-10-11');assert.equal(r.weekly.at(-2).partial,false);assert.equal(r.weekly.at(-1).partial,true);
 });
 test('cancelled excluded and ratios use sums, not daily averages', () => {
   const orders=[{date_created:now,total_amount:200,status:'cancelled'},{date_created:now,total_amount:1000,status:'paid'}];
