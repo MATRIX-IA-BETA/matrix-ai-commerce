@@ -309,9 +309,10 @@ async function processarRespostaAutomaticaML(threadId) {
   }
   try {
     const recent = messages.slice(-8).map(x => String(x.text || "")).join(" ");
-    const risky = AUTO_RISCO.test(recent) || Boolean(thread.ai_requires_approval);
+    const risky = AUTO_RISCO.test(recent) || thread.affects_reputation || thread.priority === "urgent";
     if (risky || !String(last.text || "").trim()) {
       await state("blocked", "critical_or_unsupported");
+      await supabase.from("sac_threads").update({ priority: "high", ai_requires_approval: true }).eq("id", threadId);
       return { action: "human", reason: "critical_or_unsupported" };
     }
     const draft = await gerarRascunhoIA(threadId, { regenerate: true });
@@ -322,6 +323,7 @@ async function processarRespostaAutomaticaML(threadId) {
       String(draft.ai_draft || "").length <= 350;
     if (!safe) {
       await state("blocked", "requires_human_review");
+      await supabase.from("sac_threads").update({ priority: "high", ai_requires_approval: true }).eq("id", threadId);
       return { action: "human", reason: "requires_human_review" };
     }
     // A flag de produção permanece desligada até os testes reais de integração.
