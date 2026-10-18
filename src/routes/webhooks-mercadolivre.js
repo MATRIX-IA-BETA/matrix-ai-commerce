@@ -2,7 +2,8 @@ const router = require("express").Router();
 const { supabase } = require("../db/supabase");
 const { sincronizarPedidoPorId } = require("../services/mercadolivre");
 const {
-  processarNotificacaoClaimML
+  processarNotificacaoClaimML,
+  processarNotificacaoMensagemML
 } = require("../services/sac");
 
 router.post(
@@ -20,9 +21,8 @@ router.post(
       payload.resource
     );
 
-    // Mensagens pós-venda são carregadas ao vivo na Central SAC ML.
-    // A IA não envia mais respostas automaticamente: agora ela apenas gera
-    // uma sugestão quando o operador clicar em SUGESTÃO AI.
+    // Mensagens: sincronização e rascunho da IA. Envio automático exige
+    // implementação de idempotência e validação de risco antes da ativação.
 
     try {
       const {
@@ -85,6 +85,10 @@ router.post(
               match[1]
             );
           }
+        }
+
+        if (payload.topic === "messages" && /\/packs\/\d+/.test(resource)) {
+          await processarNotificacaoMensagemML(payload);
         }
 
         // Reclamações e ações em reclamações
