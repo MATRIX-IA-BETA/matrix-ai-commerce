@@ -138,7 +138,7 @@ async function processarNotificacaoMensagemML(payload) {
   const packId = extrairPackId(payload.resource);
   if (packId) {
     const thread = await sincronizarConversaML(packId, false);
-    await gerarRascunhoIA(thread.id, { regenerate: false });
+    await processarRespostaAutomaticaML(thread.id);
   }
 }
 
@@ -279,6 +279,81 @@ async function gerarRascunhoIA(threadId, options = {}) {
   }).eq("id", threadId).select("*").single();
   if (error) throw new Error(`Erro salvando rascunho IA: ${error.message}`);
   return data;
+}
+
+
+// Classificação conservadora: qualquer dúvida fica com a equipe.
+// A reserva é exclusiva por mensagem do comprador, nunca por notificação webhook.
+const AUTO_CATEGORIAS = new Set(["configuracao", "entrega"]);
+const AUTO_RISCO = /reclama|reembolso|estorno|devolu|troca|garantia|defeito|queim|fumaça|choque|voltagem|127v|220v|processo|advogad|procon|ameaça|indeniza|não liga|nao liga|sem vídeo|sem video|tela azul|trav|reinici|hd|ssd|disco|arquivo|dados|perdi|ajuda humana|atendente|humano|falar com|cancel|quebrad|avari|urgente/i;
+
+async function processarRespostaAutomaticaML(threadId) {
+  const { thread, messages } = await contextoSac(threadId);
+  if (thread.type !== "message" || !thread.pack_id) return { action: "human", reason: "not_post_sale_message" };
+  const last = messages[messages.length - 1];
+  if (!last || last.direction !== "inbound" || !last.external_message_id) {
+    return { action: "skip", reason: "not_last_inbound" };
+  }
+  const { data: reserved, error: reserveError } = await supabase.rpc("sac_ml_reserve_reply", {
+    p_inbound_message_id: String(last.external_message_id),
+    p_thread_id: thread.id,
+    p_pack_id: thread.pack_id
+  });
+  if (reserveError) throw reserveError;
+  if (!reserved) return { action: "skip", reason: "already_reserved" };
+  async function state(status, reason, extra = {}) {
+    const { error } = await supabase.from("sac_ml_auto_outbox").update({
+      status, reason, updated_at: new Date().toISOString(), ...extra
+    }).eq("inbound_message_id", String(last.external_message_id));
+    if (error) throw error;
+  }
+  try {
+    const recent = messages.slice(-8).map(x => String(x.text || "")).join(" ");
+    const risky = AUTO_RISCO.test(recent) || Boolean(thread.ai_requires_approval);
+    if (risky || !String(last.text || "").trim()) {
+      await state("blocked", "critical_or_unsupported");
+      return { action: "human", reason: "critical_or_unsupported" };
+    }
+    const draft = await gerarRascunhoIA(threadId, { regenerate: true });
+    const safe = !draft.ai_requires_approval &&
+      AUTO_CATEGORIAS.has(String(draft.ai_category || "").trim()) &&
+      !AUTO_RISCO.test(String(draft.ai_draft || "")) &&
+      String(draft.ai_draft || "").trim().length >= 15 &&
+      String(draft.ai_draft || "").length <= 350;
+    if (!safe) {
+      await state("blocked", "requires_human_review");
+      return { action: "human", reason: "requires_human_review" };
+    }
+    // A flag de produção permanece desligada até os testes reais de integração.
+    if (!SAC_AUTO_SEND_SIMPLE) {
+      await state("blocked", "simulation_flag_off", { response_text: draft.ai_draft });
+      return { action: "draft", reason: "simulation_flag_off" };
+    }
+    // Releitura do ML imediatamente antes do envio: cliente/equipe podem ter respondido.
+    await sincronizarConversaML(thread.pack_id, false);
+    const fresh = await contextoSac(threadId);
+    if (String(fresh.messages.at(-1)?.external_message_id) !== String(last.external_message_id) ||
+        fresh.messages.at(-1)?.direction !== "inbound") {
+      await state("blocked", "conversation_changed");
+      return { action: "skip", reason: "conversation_changed" };
+    }
+    await state("sending", "request_started", { response_text: draft.ai_draft });
+    try {
+      const result = await enviarMensagemPosVendaML(thread, draft.ai_draft);
+      await state("sent", "confirmed", { outbound_message_id: String(result?.id || result?.message_id || "") });
+      await supabase.from("sac_threads").update({
+        last_response_text: draft.ai_draft, last_response_at: new Date().toISOString()
+      }).eq("id", threadId);
+      return { action: "sent" };
+    } catch (err) {
+      // Nunca tenta reenvio cego: timeout pode significar envio efetivado.
+      await state("uncertain", String(err.message || err).slice(0, 500));
+      throw err;
+    }
+  } catch (err) {
+    console.error("[ML SAC AUTO] ", err);
+    throw err;
+  }
 }
 
 async function enviarMensagemPosVendaML(thread, text) {
