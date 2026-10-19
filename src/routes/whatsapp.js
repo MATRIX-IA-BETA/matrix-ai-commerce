@@ -968,6 +968,33 @@ function extrairRegraTreinamento(texto) {
     .trim();
 }
 
+function comandoInicioAprendizado(texto) {
+  return /^\s*(modo aprendizado|iniciar modo aprendizado|ativar modo aprendizado|iniciar treinamento)\s*[!.]?\s*$/i.test(String(texto || ""));
+}
+
+function comandoFimAprendizado(texto) {
+  return /^\s*(sair do modo aprendizado|encerrar (?:modo aprendizado|treinamento)|finalizar treinamento|modo normal|desativar modo aprendizado)\s*[!.]?\s*$/i.test(String(texto || ""));
+}
+
+async function estadoTreinamentoAdmin(numero) {
+  const data = await supabaseRest(
+    "whatsapp_admin_training_sessions?phone=eq." + encodeURIComponent(limparNumero(numero)) + "&select=active&limit=1"
+  );
+  return Array.isArray(data) && data[0]?.active === true;
+}
+
+async function definirTreinamentoAdmin(numero, active) {
+  await supabaseRest("whatsapp_admin_training_sessions?on_conflict=phone", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify({
+      phone: limparNumero(numero),
+      active,
+      updated_at: new Date().toISOString()
+    })
+  });
+}
+
 async function salvarConhecimentoOficial(
   conteudo
 ) {
@@ -1939,17 +1966,32 @@ router.post(
                 conversa.id
               );
 
-            // TREINAMENTO AO VIVO PELO WHATSAPP DO ADMIN
+            // TREINAMENTO AO VIVO: só administradores podem gravar regras oficiais.
+            if (userType === "admin" && comandoInicioAprendizado(messageText)) {
+              await definirTreinamentoAdmin(message.from, true);
+              await enviarMensagemWhatsApp(message.from,
+                "Modo aprendizado ATIVADO. Envie uma regra por mensagem. Vou salvar cada regra na base oficial e confirmar. Para sair, escreva ENCERRAR TREINAMENTO.");
+              continue;
+            }
+
+            if (userType === "admin" && comandoFimAprendizado(messageText)) {
+              await definirTreinamentoAdmin(message.from, false);
+              await enviarMensagemWhatsApp(message.from,
+                "Modo aprendizado ENCERRADO. As regras gravadas continuam disponíveis para os próximos atendimentos.");
+              continue;
+            }
+
+            const treinamentoAtivo = userType === "admin"
+              ? await estadoTreinamentoAdmin(message.from)
+              : false;
+
             if (
-              ehComandoDeTreinamento(
-                message.from,
-                messageText
-              )
+              ehComandoDeTreinamento(message.from, messageText) ||
+              (treinamentoAtivo && messageText.trim())
             ) {
-              const regra =
-                extrairRegraTreinamento(
-                  messageText
-                );
+              const regra = ehComandoDeTreinamento(message.from, messageText)
+                ? extrairRegraTreinamento(messageText)
+                : messageText.trim();
 
               if (!regra) {
                 await enviarMensagemWhatsApp(
