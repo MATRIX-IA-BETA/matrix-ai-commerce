@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop Matrix | Custos Mercado Livre</title>
+<style>
+:root{color-scheme:dark;--bg:#08101d;--panel:#111e31;--border:#2e4261;--text:#f5f8ff;--sub:#aabbd4;--blue:#3587ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px system-ui,Arial,sans-serif;color:var(--text)}
+main{max-width:1100px;margin:0 auto;padding:22px}h1{font-size:28px;margin:8px 0}p{color:var(--sub);line-height:1.55}.filters,.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+label{font-size:13px;color:var(--sub);display:block}input{display:block;width:100%;background:#172843;color:white;border:1px solid var(--border);padding:12px;border-radius:9px;margin-top:6px}
+button{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:12px 18px;cursor:pointer;font-weight:700}button:disabled{opacity:.6}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 22px}.actions button:nth-child(n+2){background:#213653}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:15px;padding:18px;min-height:190px}.card small{color:var(--sub);font-size:13px}.card strong{display:block;font-size:29px;margin:15px 0}.status{font-size:13px;color:#c5d7ff}
+#detail{border:1px solid var(--border);border-radius:14px;padding:18px;background:var(--panel);margin-top:16px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px;border-bottom:1px solid var(--border)}.note{font-size:12px;color:var(--sub)}
+@media(max-width:690px){.filters,.cards{grid-template-columns:1fr}main{padding:15px}}
+</style></head>
+<body><main><header><h1>Custos do Mercado Livre</h1><p>Consulte anúncios, antecipações e fretes de retorno sem misturar despesas de naturezas diferentes.</p></header>
+<div class="filters"><label>Data inicial<input id="start" type="date"></label><label>Data final<input id="end" type="date"></label><label>Período rápido<div class="actions"><button id="last30" type="button">30 dias</button><button id="month" type="button">Mês atual</button></div></label></div>
+<div class="actions"><button id="search" type="button">Consultar custos</button><button id="report" type="button">Solicitar relatório de antecipação</button></div>
+<div class="cards"><section class="card"><small>Product Ads (investimento)</small><strong id="ads">—</strong><div class="status" id="ads-status">Aguardando consulta</div></section>
+<section class="card"><small>Taxa de antecipação</small><strong id="advance">—</strong><div class="status" id="advance-status">Aguardando consulta</div></section>
+<section class="card"><small>Frete de devolução</small><strong id="returns">—</strong><div class="status" id="returns-status">Aguardando consulta</div></section></div>
+<p class="note">O frete de devolução usa reclamações notificadas no intervalo e pode incluir cobranças feitas em outra data; não representa fluxo de caixa contábil do mês. Ads considera Product Ads. Antecipação considera exclusivamente a descrição oficial da tarifa no relatório do Mercado Pago.</p>
+<section id="detail"><h2>Detalhes da consulta</h2><div id="details">Selecione um período para começar.</div></section>
+</main><script>
+const $=id=>document.getElementById(id);
+const brl=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(n);
+const local=d=>new Intl.DateTimeFormat('en-CA',{year:'numeric',month:'2-digit',day:'2-digit',timeZone:'America/Sao_Paulo'}).format(d);
+function dates30(){const now=new Date();$('end').value=local(now);$('start').value=local(new Date(now.getTime()-29*86400000));}
+dates30();
+$('last30').onclick=dates30;
+$('month').onclick=()=>{const today=local(new Date());$('end').value=today;$('start').value=today.slice(0,7)+'-01';};
+function query(){const start=$('start').value,end=$('end').value;if(!start||!end||start>end)throw Error('Escolha datas válidas.');return '?'+new URLSearchParams({date_from:start,date_to:end});}
+async function request(path,options){const resp=await fetch(path,options);const payload=await resp.json();if(!resp.ok||!payload.success)throw Error(payload.message||'Falha na API');return payload;}
+function set(id,data){$(id).textContent=brl(data.total);$(id+'-status').textContent=data.status==='partial'?'Parcial — consulte os detalhes':'Consulta concluída';}
+function error(id,e){$(id).textContent='—';$(id+'-status').textContent=e.message;}
+async function run(){
+ let q;try{q=query();}catch(e){alert(e.message);return;}
+ $('search').disabled=true;
+ ['ads','returns','advance'].forEach(id=>{$(id).textContent='…';$(id+'-status').textContent='Consultando';});
+ const paths=[['ads','/api/finance/custos/ads'],['returns','/api/finance/custos/devolucoes'],['advance','/api/finance/custos/antecipacao']];
+ const notes=[];
+ await Promise.all(paths.map(async([id,path])=>{try{const data=await request(path+q);if(data.status==='ready'||data.status==='partial'){set(id,data);}else{$(id).textContent='Pendente';$(id+'-status').textContent=data.message||'Relatório não gerado';}
+ notes.push({category:id,data});}catch(e){error(id,e);notes.push({category:id,error:e.message});}}));
+ $('details').textContent='';
+ const summary=document.createElement('p');summary.textContent='Período: '+$('start').value+' a '+$('end').value;$('details').appendChild(summary);
+ for(const n of notes){
+ const section=document.createElement('div'),h=document.createElement('h3');h.textContent={ads:'Publicidade',returns:'Devoluções',advance:'Antecipação'}[n.category];section.appendChild(h);
+ const p=document.createElement('p');p.textContent=n.error||n.data.notice||n.data.message||'Total consultado na API';section.appendChild(p);
+ if(n.data?.details?.length){const table=document.createElement('table');const head=document.createElement('tr');['Referência / data','Valor'].forEach(t=>{const th=document.createElement('th');th.textContent=t;head.appendChild(th);});table.appendChild(head);
+ for(const row of n.data.details.slice(0,200)){const tr=document.createElement('tr');[row.claim_id||row.date||row.source_id||'—',brl(row.amount)].forEach(t=>{const td=document.createElement('td');td.textContent=t;tr.appendChild(td);});table.appendChild(tr);}section.appendChild(table);}
+ if(n.data?.errors?.length){const warn=document.createElement('p');warn.textContent=n.data.errors.length+' reclamações não puderam ser consultadas. Total parcial.';section.appendChild(warn);}
+ $('details').appendChild(section);
+ }
+ $('search').disabled=false;
+}
+$('search').onclick=run;
+$('report').onclick=async()=>{let q;try{q=query();}catch(e){alert(e.message);return;}
+ $('report').disabled=true;$('advance-status').textContent='Solicitando geração no Mercado Pago…';
+ try{const obj=Object.fromEntries(new URLSearchParams(q.slice(1)));const data=await request('/api/finance/custos/antecipacao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});$('advance-status').textContent=data.message||'Relatório disponível';if(data.status==='ready')set('advance',data);}catch(e){error('advance',e);}finally{$('report').disabled=false;}
+};
+</script></body></html>
