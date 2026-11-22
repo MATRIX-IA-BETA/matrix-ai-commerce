@@ -149,6 +149,8 @@ app.get("/mercadolivre-perguntas.html", sendMatrixPage("mercadolivre-perguntas.h
 // Financeiro e patrimônio consolidado da empresa.
 app.get("/finance", sendMatrixPage("finance.html"));
 app.get("/finance.html", sendMatrixPage("finance.html"));
+app.get("/custos-ml", sendMatrixPage("custos-ml.html"));
+app.get("/custos-ml.html", sendMatrixPage("custos-ml.html"));
 
 // Cockpit de estoque, peças e kits.
 app.get("/stock", sendMatrixPage("stock.html"));
@@ -189,6 +191,7 @@ app.use(require("./src/routes/webhooks-mercadolivre"));
 // O callback financeiro do Mercado Pago reaproveita a redirect URI do ML e
 // precisa ter a primeira chance de capturar apenas os states prefixados mp_.
 app.use(require("./src/routes/finance-ml-funds"));
+app.use(require("./src/routes/finance-costs-period"));
 app.use(require("./src/routes/mercadolivre"));
 app.use(require("./src/routes/mercado-ads"));
 app.use(require("./src/routes/sac"));
