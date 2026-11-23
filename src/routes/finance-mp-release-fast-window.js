@@ -5,12 +5,18 @@ if (!global.__matrixMpReleaseFastWindow && typeof originalFetch === "function") 
 
   global.fetch = async function matrixFetch(input, init = {}) {
     const url = typeof input === "string" ? input : String(input?.url || "");
-    let nextInit = init;
+    // Consultas históricas explícitas precisam preservar as datas originais.
+    // Removemos a marcação interna antes de enviar a chamada ao Mercado Pago.
+    const headers = { ...(init?.headers || {}) };
+    const fullPeriod = headers["X-Matrix-Full-Period"] === "1";
+    delete headers["X-Matrix-Full-Period"];
+    let nextInit = { ...init, headers };
 
     if (
       url === "https://api.mercadopago.com/v1/account/release_report" &&
       String(init?.method || "GET").toUpperCase() === "POST" &&
-      typeof init?.body === "string"
+      typeof init?.body === "string" &&
+      !fullPeriod
     ) {
       try {
         const body = JSON.parse(init.body);
