@@ -35,6 +35,28 @@ installBlingFiscalProductLink();
 // Antes da atualização, consulta a NF-e existente e preserva número/série.
 installBlingNfePutPreserve();
 
+// Custos financeiros exigem credencial administrativa isolada.
+const protectedCosts = ["/custos-ml", "/custos-ml.html", "/api/finance/custos"];
+app.use(protectedCosts, (req, res, next) => {
+  const { timingSafeEqual } = require("crypto");
+  const secret = process.env.MATRIX_COSTS_ACCESS_KEY;
+  if (!secret || secret.length < 16) return res.status(503).send("Painel de custos aguardando configuração segura.");
+  const header = String(req.headers.authorization || "");
+  let supplied = "";
+  if (header.startsWith("Basic ")) {
+    try {
+      const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+      const i = decoded.indexOf(":");
+      if (i >= 0 && decoded.slice(0, i) === "shopmatrix") supplied = decoded.slice(i + 1);
+    } catch (_) {}
+  }
+  const expected = Buffer.from(secret);
+  const received = Buffer.from(supplied);
+  if (expected.length === received.length && timingSafeEqual(expected, received)) return next();
+  res.set("WWW-Authenticate", 'Basic realm="Shop Matrix - Custos", charset="UTF-8"');
+  return res.status(401).send("Acesso administrativo necessário.");
+});
+
 // =========================================================
 // INTERFACES WEB
 // =========================================================
