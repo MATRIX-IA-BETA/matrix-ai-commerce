@@ -17,7 +17,7 @@ function period(query = {}) {
     const e = new Error("Datas inválidas. Use AAAA-MM-DD."); e.status = 400; throw e;
   }
   const days = Math.round((Date.parse(end + "T12:00:00Z") - Date.parse(start + "T12:00:00Z")) / 86400000) + 1;
-  if (days < 1 || days > 93) { const e = new Error("Escolha de 1 a 93 dias por consulta."); e.status = 400; throw e; }
+  if (days < 1 || days > 90) { const e = new Error("Escolha de 1 a 90 dias por consulta."); e.status = 400; throw e; }
   return { start, end, days, beginUtc: start + "T03:00:00Z", endUtc: new Date(Date.parse(end + "T03:00:00Z") + 86400000).toISOString().replace(".000Z","Z") };
 }
 async function mpAccount() {
@@ -64,7 +64,7 @@ function advanceFromCsv(csv, sep, dates) {
   const h=rows[0].map(x=>String(x).trim().toUpperCase());
   const col=name=>h.indexOf(name);
   for (const required of ["DATE","DESCRIPTION","NET_DEBIT_AMOUNT"]) if(col(required)<0) throw new Error("Coluna ausente: "+required);
-  const unique=new Set(), details=[];
+  const details=[];
   for(const r of rows.slice(1)) {
     const description=String(r[col("DESCRIPTION")]||"").trim().toLowerCase().replace(/-/g,"_");
     if (!/^fee_release_in_advance$/.test(description)) continue;
@@ -74,8 +74,6 @@ function advanceFromCsv(csv, sep, dates) {
     const credit=col("NET_CREDIT_AMOUNT")>=0 ? Math.abs(currency(r[col("NET_CREDIT_AMOUNT")])) : 0;
     const amount=round(debit-credit);
     const id=col("SOURCE_ID")>=0 ? String(r[col("SOURCE_ID")]||"") : "";
-    const key=[date,id,amount].join("|");
-    if(unique.has(key)) continue;unique.add(key);
     details.push({date, source_id:id||null, amount});
   }
   return {total:round(details.reduce((s,r)=>s+r.amount,0)), transactions:details.length, details};
@@ -98,7 +96,7 @@ async function advances(range, generate) {
     return {status:"ready",period:range,source:"mercadopago_release_report",file:report.file_name,...advanceFromCsv(csv,sep,range)};
   }
   if (!generate) return {status:"pending",period:range,message:"Relatório ainda não disponível. Solicite a geração."};
-  const task=await mp("/v1/account/release_report",acc,{method:"POST",body:JSON.stringify({begin_date:range.beginUtc,end_date:range.endUtc})});
+  const task=await mp("/v1/account/release_report",acc,{method:"POST",headers:{"X-Matrix-Full-Period":"1"},body:JSON.stringify({begin_date:range.beginUtc,end_date:range.endUtc})});
   return {status:"generating",period:range,task_id:task.id||null,message:"Mercado Pago está preparando o relatório. Consulte novamente em instantes."};
 }
 async function advertising(range) {
